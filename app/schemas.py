@@ -65,3 +65,15 @@ class JobUrlValidationResponse(BaseModel):
     normalized_url: str
     hostname: str
     scheme: str
+
+class JobPageFetchResponse(BaseModel):
+    """Metadata returned after retrieving a public job page."""
+
+    fetched: bool
+    source_url: str
+    final_url: str
+    status_code: int
+    content_type: str
+    bytes_downloaded: int
+    redirect_count: int
+    content_sha256: str
