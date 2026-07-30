@@ -1,0 +1,9 @@
+[project]
+name = "applyflow"
+version = "0.1.0"
+description = "A personal job-search assistant for importing and evaluating job postings."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
