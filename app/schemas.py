@@ -1,12 +1,12 @@
 from ipaddress import ip_address
-
+from datetime import datetime
 from pydantic import (
     BaseModel,
     Field,
     HttpUrl,
     field_validator,
+    ConfigDict,
 )
-
 
 BLOCKED_HOSTNAMES = {
     "localhost",
@@ -106,3 +106,31 @@ class JobExtractionResponse(BaseModel):
     extracted: bool
     extraction_method: str
     job: ExtractedJobPosting
+
+class StoredJobResponse(BaseModel):
+    """A job posting persisted in the database."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    source_url: str
+    final_url: str
+    application_url: str
+    content_sha256: str
+    title: str
+    company: str | None
+    location: str | None
+    description: str | None
+    employment_types: list[str]
+    date_posted: str | None
+    valid_through: str | None
+    created_at: datetime
+
+
+class JobImportResponse(BaseModel):
+    """Result of importing a job posting."""
+
+    created: bool
+    job: StoredJobResponse
