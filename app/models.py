@@ -46,6 +46,11 @@ class Job(Base):
         String(64),
     )
 
+    extraction_method: Mapped[str] = mapped_column(
+        String(30),
+        default="json_ld",
+    )
+
     title: Mapped[str] = mapped_column(
         String(300),
         index=True,

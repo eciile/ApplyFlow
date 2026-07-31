@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_session
+from app.schemas import ExtractedJobPosting
+from app.services.job_sources import JobExtractionResult
 
 client = TestClient(app)
 
@@ -379,6 +381,7 @@ def test_import_job_is_saved_without_duplicates(
     assert first_job["employment_types"] == [
         "FULL_TIME"
     ]
+    assert first_job["extraction_method"] == "json_ld"
 
     second_response = client.post(
         "/jobs/import",
@@ -396,3 +399,49 @@ def test_import_job_is_saved_without_duplicates(
 
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
+
+def test_extract_endpoint_uses_greenhouse_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_extract_ats_job(
+        url: str,
+    ) -> JobExtractionResult:
+        return JobExtractionResult(
+            job=ExtractedJobPosting(
+                title="Junior Data Engineer",
+                company="Example Company",
+                location="Paris, France",
+                description="Build reliable data pipelines.",
+                employment_types=[],
+                date_posted=None,
+                valid_through=None,
+                application_url=url,
+            ),
+            extraction_method="greenhouse",
+            final_url=url,
+            content_sha256="b" * 64,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "extract_ats_job",
+        fake_extract_ats_job,
+    )
+
+    response = client.post(
+        "/jobs/extract",
+        json={
+            "url": (
+                "https://job-boards.greenhouse.io/"
+                "example/jobs/12345"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["extraction_method"] == "greenhouse"
+    assert data["job"]["title"] == "Junior Data Engineer"
+    assert data["job"]["company"] == "Example Company"
