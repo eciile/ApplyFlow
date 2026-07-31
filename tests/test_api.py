@@ -7,10 +7,49 @@ from app.services.job_page_fetcher import (
     FetchedJobPage,
     UnsupportedContentTypeError,
 )
+from collections.abc import Generator
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base, get_session
 
 client = TestClient(app)
 
+@pytest.fixture(autouse=True)
+def isolated_database() -> Generator[None, None, None]:
+    """Use a fresh in-memory SQLite database per test."""
+
+    test_engine = create_engine(
+        "sqlite://",
+        connect_args={
+            "check_same_thread": False,
+        },
+        poolclass=StaticPool,
+    )
+
+    testing_session = sessionmaker(
+        bind=test_engine,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+    Base.metadata.create_all(test_engine)
+
+    def override_get_session():
+        with testing_session() as session:
+            yield session
+
+    app.dependency_overrides[
+        get_session
+    ] = override_get_session
+
+    yield
+
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(test_engine)
+    test_engine.dispose()
 
 def test_health_check() -> None:
     response = client.get("/health")
@@ -274,3 +313,86 @@ def _fake_page(
         redirect_count=0,
         content_sha256="a" * 64,
     )
+
+def test_import_job_is_saved_without_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Junior Data Engineer",
+          "description": "<p>Build data pipelines.</p>",
+          "employmentType": "FULL_TIME",
+          "hiringOrganization": {
+            "@type": "Organization",
+            "name": "Example Company"
+          },
+          "jobLocation": {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "Paris",
+              "addressCountry": "FR"
+            }
+          },
+          "url": "https://jobs.example.com/jobs/123"
+        }
+        </script>
+      </head>
+    </html>
+    """
+
+    async def fake_fetch_job_page(
+        url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=url,
+            html=html,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_job_page",
+        fake_fetch_job_page,
+    )
+
+    request_body = {
+        "url": "https://jobs.example.com/jobs/123"
+    }
+
+    first_response = client.post(
+        "/jobs/import",
+        json=request_body,
+    )
+
+    assert first_response.status_code == 201
+    assert first_response.json()["created"] is True
+
+    first_job = first_response.json()["job"]
+
+    assert first_job["title"] == "Junior Data Engineer"
+    assert first_job["company"] == "Example Company"
+    assert first_job["employment_types"] == [
+        "FULL_TIME"
+    ]
+
+    second_response = client.post(
+        "/jobs/import",
+        json=request_body,
+    )
+
+    assert second_response.status_code == 200
+    assert second_response.json()["created"] is False
+    assert (
+        second_response.json()["job"]["id"]
+        == first_job["id"]
+    )
+
+    list_response = client.get("/jobs")
+
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1

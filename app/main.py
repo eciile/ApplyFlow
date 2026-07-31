@@ -1,10 +1,17 @@
-from fastapi import FastAPI, HTTPException, status
-
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    status,
+    Depends,
+    Response,
+)
 from app.schemas import (
     JobPageFetchResponse,
     JobUrlRequest,
     JobUrlValidationResponse,
     JobExtractionResponse,
+    JobImportResponse,
+    StoredJobResponse,
 )
 from app.services.job_page_fetcher import (
     FetchedJobPage,
@@ -22,6 +29,12 @@ from app.services.jsonld_extractor import (
     extract_job_posting_jsonld,
 )
 from app.services.url_security import UnsafeUrlError
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.database import get_session
+from app.models import Job
 
 app = FastAPI(
     title="ApplyFlow API",
@@ -178,3 +191,120 @@ async def extract_job_from_url(
         extraction_method="json_ld",
         job=job,
     )
+
+@app.post(
+    "/jobs/import",
+    response_model=JobImportResponse,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Jobs"],
+)
+async def import_job(
+    payload: JobUrlRequest,
+    response: Response,
+    session: Session = Depends(get_session),
+) -> JobImportResponse:
+    """
+    Fetch, extract, and persist a job posting.
+
+    Importing the same normalized source URL more than once
+    returns the existing record.
+    """
+
+    source_url = str(payload.url)
+
+    existing_job = session.scalar(
+        select(Job).where(
+            Job.source_url == source_url
+        )
+    )
+
+    if existing_job is not None:
+        response.status_code = status.HTTP_200_OK
+
+        return JobImportResponse(
+            created=False,
+            job=StoredJobResponse.model_validate(
+                existing_job
+            ),
+        )
+
+    page = await _retrieve_job_page(source_url)
+
+    try:
+        extracted_job = extract_job_posting_jsonld(
+            html=page.html,
+            source_url=page.final_url,
+        )
+    except JobPostingNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    job = Job(
+        source_url=source_url,
+        final_url=page.final_url,
+        application_url=extracted_job.application_url,
+        content_sha256=page.content_sha256,
+        title=extracted_job.title,
+        company=extracted_job.company,
+        location=extracted_job.location,
+        description=extracted_job.description,
+        employment_types=extracted_job.employment_types,
+        date_posted=extracted_job.date_posted,
+        valid_through=extracted_job.valid_through,
+    )
+
+    session.add(job)
+
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+
+        existing_job = session.scalar(
+            select(Job).where(
+                Job.source_url == source_url
+            )
+        )
+
+        if existing_job is None:
+            raise
+
+        response.status_code = status.HTTP_200_OK
+
+        return JobImportResponse(
+            created=False,
+            job=StoredJobResponse.model_validate(
+                existing_job
+            ),
+        )
+
+    session.refresh(job)
+
+    return JobImportResponse(
+        created=True,
+        job=StoredJobResponse.model_validate(job),
+    )
+
+
+@app.get(
+    "/jobs",
+    response_model=list[StoredJobResponse],
+    tags=["Jobs"],
+)
+def list_jobs(
+    session: Session = Depends(get_session),
+) -> list[StoredJobResponse]:
+    """Return every imported job, newest first."""
+
+    jobs = session.scalars(
+        select(Job).order_by(
+            Job.created_at.desc()
+        )
+    ).all()
+
+    return [
+        StoredJobResponse.model_validate(job)
+        for job in jobs
+    ]
