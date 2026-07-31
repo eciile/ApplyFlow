@@ -127,6 +127,7 @@ class StoredJobResponse(BaseModel):
     date_posted: str | None
     valid_through: str | None
     created_at: datetime
+    extraction_method: str
 
 
 class JobImportResponse(BaseModel):

@@ -35,6 +35,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_session
 from app.models import Job
+from app.services.job_sources import (
+    JobExtractionResult,
+    JobSourceError,
+    JobSourceNotFoundError,
+    extract_ats_job,
+)
 
 app = FastAPI(
     title="ApplyFlow API",
@@ -132,6 +138,50 @@ async def _retrieve_job_page(
             detail="The job page could not be retrieved.",
         ) from exc
 
+async def _extract_structured_job(
+    url: str,
+) -> JobExtractionResult:
+    """
+    Extract a job through an ATS adapter or JSON-LD fallback.
+    """
+
+    try:
+        ats_result = await extract_ats_job(url)
+
+    except JobSourceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    except JobSourceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    if ats_result is not None:
+        return ats_result
+
+    page = await _retrieve_job_page(url)
+
+    try:
+        job = extract_job_posting_jsonld(
+            html=page.html,
+            source_url=page.final_url,
+        )
+    except JobPostingNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    return JobExtractionResult(
+        job=job,
+        extraction_method="json_ld",
+        final_url=page.final_url,
+        content_sha256=page.content_sha256,
+    )
 
 @app.post(
     "/jobs/fetch",
@@ -169,27 +219,16 @@ async def fetch_public_job_page(
 async def extract_job_from_url(
     payload: JobUrlRequest,
 ) -> JobExtractionResponse:
-    """Retrieve a job URL and extract JobPosting JSON-LD."""
+    """Extract a job through an ATS adapter or JSON-LD."""
 
-    page = await _retrieve_job_page(
+    result = await _extract_structured_job(
         str(payload.url)
     )
 
-    try:
-        job = extract_job_posting_jsonld(
-            html=page.html,
-            source_url=page.final_url,
-        )
-    except JobPostingNotFoundError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=str(exc),
-        ) from exc
-
     return JobExtractionResponse(
         extracted=True,
-        extraction_method="json_ld",
-        job=job,
+        extraction_method=result.extraction_method,
+        job=result.job,
     )
 
 @app.post(
@@ -231,10 +270,8 @@ async def import_job(
     page = await _retrieve_job_page(source_url)
 
     try:
-        extracted_job = extract_job_posting_jsonld(
-            html=page.html,
-            source_url=page.final_url,
-        )
+        result = await _extract_structured_job(source_url)
+        extracted_job = result.job
     except JobPostingNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -243,9 +280,10 @@ async def import_job(
 
     job = Job(
         source_url=source_url,
-        final_url=page.final_url,
+        final_url=result.final_url,
         application_url=extracted_job.application_url,
-        content_sha256=page.content_sha256,
+        content_sha256=result.content_sha256,
+        extraction_method=result.extraction_method,
         title=extracted_job.title,
         company=extracted_job.company,
         location=extracted_job.location,
