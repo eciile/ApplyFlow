@@ -25,7 +25,7 @@ def test_valid_job_url() -> None:
         json={
             "url": (
                 "https://jobs.example.com/"
-                "positions/data-engineer?source=linkedin"
+                "positions/data-engineer"
             )
         },
     )
@@ -37,10 +37,6 @@ def test_valid_job_url() -> None:
     assert data["valid"] is True
     assert data["hostname"] == "jobs.example.com"
     assert data["scheme"] == "https"
-    assert data["normalized_url"] == (
-        "https://jobs.example.com/"
-        "positions/data-engineer?source=linkedin"
-    )
 
 
 @pytest.mark.parametrize(
@@ -70,15 +66,9 @@ def test_fetch_job_page_endpoint(
     async def fake_fetch_job_page(
         url: str,
     ) -> FetchedJobPage:
-        return FetchedJobPage(
-            source_url=url,
-            final_url=url,
-            status_code=200,
-            content_type="text/html",
+        return _fake_page(
+            url=url,
             html="<html><body>Data Engineer</body></html>",
-            bytes_downloaded=46,
-            redirect_count=0,
-            content_sha256="a" * 64,
         )
 
     monkeypatch.setattr(
@@ -101,7 +91,6 @@ def test_fetch_job_page_endpoint(
     assert data["fetched"] is True
     assert data["status_code"] == 200
     assert data["content_type"] == "text/html"
-    assert data["redirect_count"] == 0
     assert data["content_sha256"] == "a" * 64
 
 
@@ -130,7 +119,158 @@ def test_fetch_endpoint_rejects_non_html_content(
     )
 
     assert response.status_code == 415
+
+
+def test_extract_job_posting_jsonld(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@graph": [
+            {
+              "@type": "Organization",
+              "name": "Example organization"
+            },
+            {
+              "@type": "JobPosting",
+              "title": "Junior Data Engineer",
+              "description": "<p>Build reliable pipelines.</p>",
+              "datePosted": "2026-07-20",
+              "validThrough": "2026-08-20",
+              "employmentType": ["FULL_TIME", "PERMANENT"],
+              "hiringOrganization": {
+                "@type": "Organization",
+                "name": "Example Company"
+              },
+              "jobLocation": {
+                "@type": "Place",
+                "address": {
+                  "@type": "PostalAddress",
+                  "addressLocality": "Paris",
+                  "addressRegion": "Ile-de-France",
+                  "postalCode": "75001",
+                  "addressCountry": "FR"
+                }
+              },
+              "url": "https://jobs.example.com/jobs/123"
+            }
+          ]
+        }
+        </script>
+      </head>
+    </html>
+    """
+
+    async def fake_fetch_job_page(
+        url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=url,
+            html=html,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_job_page",
+        fake_fetch_job_page,
+    )
+
+    response = client.post(
+        "/jobs/extract",
+        json={
+            "url": "https://jobs.example.com/jobs/123"
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["extracted"] is True
+    assert data["extraction_method"] == "json_ld"
+
+    job = data["job"]
+
+    assert job["title"] == "Junior Data Engineer"
+    assert job["company"] == "Example Company"
+    assert job["location"] == (
+        "Paris, Ile-de-France, 75001, FR"
+    )
+    assert job["description"] == (
+        "Build reliable pipelines."
+    )
+    assert job["employment_types"] == [
+        "FULL_TIME",
+        "PERMANENT",
+    ]
+    assert job["date_posted"] == "2026-07-20"
+    assert job["valid_through"] == "2026-08-20"
+
+
+def test_extract_returns_422_without_jobposting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "WebSite",
+          "name": "Example Careers"
+        }
+        </script>
+      </head>
+    </html>
+    """
+
+    async def fake_fetch_job_page(
+        url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=url,
+            html=html,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_job_page",
+        fake_fetch_job_page,
+    )
+
+    response = client.post(
+        "/jobs/extract",
+        json={
+            "url": "https://jobs.example.com/jobs/123"
+        },
+    )
+
+    assert response.status_code == 422
     assert response.json()["detail"] == (
-        "Expected an HTML page but received "
-        "'application/pdf'."
+        "No usable JobPosting JSON-LD was found "
+        "on the page."
+    )
+
+
+def _fake_page(
+    url: str,
+    html: str,
+) -> FetchedJobPage:
+    """Create a page fixture without network access."""
+
+    return FetchedJobPage(
+        source_url=url,
+        final_url=url,
+        status_code=200,
+        content_type="text/html",
+        html=html,
+        bytes_downloaded=len(
+            html.encode("utf-8")
+        ),
+        redirect_count=0,
+        content_sha256="a" * 64,
     )

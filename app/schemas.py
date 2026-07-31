@@ -1,6 +1,11 @@
 from ipaddress import ip_address
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    HttpUrl,
+    field_validator,
+)
 
 
 BLOCKED_HOSTNAMES = {
@@ -10,26 +15,29 @@ BLOCKED_HOSTNAMES = {
 
 
 class JobUrlRequest(BaseModel):
-    """Request body used to validate a job-posting URL."""
+    """Request body containing a job-posting URL."""
 
     url: HttpUrl = Field(
         description="Public HTTP or HTTPS URL of a job posting.",
-        examples=["https://jobs.example.com/positions/data-engineer"],
+        examples=[
+            "https://jobs.example.com/positions/data-engineer"
+        ],
     )
 
     @field_validator("url")
     @classmethod
-    def reject_local_or_private_urls(cls, url: HttpUrl) -> HttpUrl:
-        """
-        Reject obvious local and private-network destinations.
+    def reject_local_or_private_urls(
+        cls,
+        url: HttpUrl,
+    ) -> HttpUrl:
+        """Reject obvious local and private destinations."""
 
-        Full network-level protection will also be added later when the
-        application starts downloading pages.
-        """
         host = url.host
 
         if not host:
-            raise ValueError("The URL must include a hostname.")
+            raise ValueError(
+                "The URL must include a hostname."
+            )
 
         normalized_host = host.lower().rstrip(".")
 
@@ -38,22 +46,19 @@ class JobUrlRequest(BaseModel):
             or normalized_host.endswith(".localhost")
             or normalized_host.endswith(".local")
         ):
-            raise ValueError("Local URLs are not allowed.")
+            raise ValueError(
+                "Local URLs are not allowed."
+            )
 
         try:
             address = ip_address(normalized_host)
         except ValueError:
-            # The host is a domain name rather than an IP address.
             return url
 
-        if (
-            address.is_private
-            or address.is_loopback
-            or address.is_link_local
-            or address.is_reserved
-            or address.is_unspecified
-        ):
-            raise ValueError("Private or local IP addresses are not allowed.")
+        if not address.is_global:
+            raise ValueError(
+                "Private or local IP addresses are not allowed."
+            )
 
         return url
 
@@ -66,8 +71,9 @@ class JobUrlValidationResponse(BaseModel):
     hostname: str
     scheme: str
 
+
 class JobPageFetchResponse(BaseModel):
-    """Metadata returned after retrieving a public job page."""
+    """Metadata returned after retrieving a job page."""
 
     fetched: bool
     source_url: str
@@ -77,3 +83,26 @@ class JobPageFetchResponse(BaseModel):
     bytes_downloaded: int
     redirect_count: int
     content_sha256: str
+
+
+class ExtractedJobPosting(BaseModel):
+    """Structured information extracted from JobPosting JSON-LD."""
+
+    title: str
+    company: str | None = None
+    location: str | None = None
+    description: str | None = None
+    employment_types: list[str] = Field(
+        default_factory=list
+    )
+    date_posted: str | None = None
+    valid_through: str | None = None
+    application_url: str
+
+
+class JobExtractionResponse(BaseModel):
+    """Successful structured job-extraction response."""
+
+    extracted: bool
+    extraction_method: str
+    job: ExtractedJobPosting
