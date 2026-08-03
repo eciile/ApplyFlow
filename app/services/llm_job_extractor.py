@@ -5,6 +5,7 @@ from ollama import AsyncClient, ResponseError
 from pydantic import ValidationError
 from app.config import Settings, get_settings
 from app.schemas import ExtractedJobPosting, GenericJobContent
+from app.text_utils import repair_utf8_mojibake
 from functools import lru_cache
 
 MAX_INPUT_CHARACTERS = 4_000
@@ -17,6 +18,28 @@ Rules:
 - Extract employment type whenever terms such as full-time,
   part-time, permanent, temporary, contract, internship,
   apprenticeship, freelance, or fixed-term are explicitly stated.
+- Extract technical skills, tools, frameworks, platforms,
+  methodologies, and explicitly requested domain knowledge.
+- Put mandatory requirements under required_skills.
+- Put optional, desirable, preferred, or bonus requirements
+  under preferred_skills.
+- Put explicitly requested spoken or written languages under
+  languages.
+- Do not classify programming languages such as Python,
+  Java, or SQL as spoken languages.
+- Do not infer requirements that are not explicitly stated.
+- Avoid broad values such as "communication skills" unless
+  the advertisement presents them as an explicit requirement.
+- Required skills include wording such as:
+  required, must have, essential, indispensable,
+  maîtrise requise, obligatoire, or prerequisites.
+- Preferred skills include wording such as:
+  preferred, desirable, bonus, nice to have,
+  apprécié, souhaité, idéalement, or un plus.
+- Preserve common technology names such as Python,
+  PostgreSQL, FastAPI, Docker, AWS, and Apache Airflow.
+- Do not place the same skill in both required_skills
+  and preferred_skills.
 - Preserve the wording used in the source text.
 - Return null for unavailable optional values.
 - Return an empty list when employment type is unavailable.
@@ -67,7 +90,7 @@ class OllamaJobExtractionClient:
                 options={
                     "temperature": 0,
                     "num_ctx": 4096,
-                    "num_predict": 256,
+                    "num_predict": 768,
                 },
                 think=False,
                 stream=False,
@@ -105,6 +128,8 @@ class OllamaJobExtractionClient:
             raise LlmJobExtractionError(
                 "Ollama returned an empty response."
             )
+
+        raw_content = repair_utf8_mojibake(raw_content)
 
         try:
             payload = json.loads(raw_content)

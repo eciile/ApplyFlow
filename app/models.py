@@ -77,6 +77,21 @@ class Job(Base):
         default=list,
     )
 
+    required_skills: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+    )
+
+    preferred_skills: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+    )
+
+    languages: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+    )
+
     date_posted: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,

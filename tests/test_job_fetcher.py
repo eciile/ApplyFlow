@@ -33,7 +33,7 @@ from app.services.generic_html_extractor import (
 from types import SimpleNamespace
 
 from app.config import Settings
-from app.schemas import GenericJobContent
+from app.schemas import ExtractedJobPosting, GenericJobContent
 from app.services.llm_job_extractor import (
     OllamaJobExtractionClient,
 )
@@ -706,14 +706,31 @@ def test_ollama_job_extraction_client() -> None:
                 message=SimpleNamespace(
                     content="""
                     {
-                      "title": "Junior Data Engineer",
-                      "company": "Example Company",
-                      "location": "Paris, France",
-                      "description": "Build reliable data pipelines.",
-                      "employment_types": ["FULL_TIME"],
-                      "date_posted": null,
-                      "valid_through": null,
-                      "application_url": "https://invented.example.com"
+                    "title": "Junior Data Engineer",
+                    "company": "Example Company",
+                    "location": "Paris, France",
+                    "description": "Build reliable data pipelines.",
+                    "employment_types": ["FULL_TIME"],
+                    "requirements": {
+                        "required_skills": [
+                        "Python",
+                        "SQL",
+                        "REST APIs",
+                        "Python"
+                        ],
+                        "preferred_skills": [
+                        "Docker",
+                        "Airflow"
+                        ],
+                        "languages": [
+                        "French",
+                        "English",
+                        "french"
+                        ]
+                    },
+                    "date_posted": null,
+                    "valid_through": null,
+                    "application_url": "https://invented.example.com"
                     }
                     """
                 )
@@ -772,3 +789,63 @@ def test_ollama_job_extraction_client() -> None:
     assert fake_client.received_model == "test-model"
     assert fake_client.received_messages is not None
     assert fake_client.received_format is not None
+    assert job.requirements.required_skills == [
+        "Python",
+        "SQL",
+        "REST APIs",
+    ]
+
+    assert job.requirements.preferred_skills == [
+        "Docker",
+        "Airflow",
+    ]
+
+    assert job.requirements.languages == [
+        "French",
+        "English",
+    ]
+
+
+def test_fetcher_repairs_double_encoded_utf8() -> None:
+    from app.services.job_page_fetcher import _decode_html_bytes
+
+    mojibake = (
+        "\u2728 Ing\u00c3\u00a9nieur avec l'exp\u00c3\u00a9rience "
+        "d\u00e2\u20ac\u2122un d\u00c3\u00a9veloppement."
+    ).encode("utf-8")
+
+    decoded = _decode_html_bytes(
+        mojibake,
+        fallback_encoding="utf-8",
+    )
+
+    assert decoded == (
+        "\u2728 Ing\u00e9nieur avec l'exp\u00e9rience "
+        "d\u2019un d\u00e9veloppement."
+    )
+
+
+def test_job_schema_repairs_mojibake_in_model_output() -> None:
+    job = ExtractedJobPosting(
+        title="Ing\u00c3\u00a9nieur IA",
+        company="Soci\u00c3\u00a9t\u00c3\u00a9 Exemple",
+        description=(
+            "\u2728 Une exp\u00c3\u00a9rience d\u00e2\u20ac\u2122un "
+            "mod\u00c3\u00a8le IA."
+        ),
+        requirements={
+            "required_skills": [
+                "Ma\u00c3\u00aetrise du d\u00c3\u00a9veloppement",
+            ],
+        },
+        application_url="https://example.com/job",
+    )
+
+    assert job.title == "Ing\u00e9nieur IA"
+    assert job.company == "Soci\u00e9t\u00e9 Exemple"
+    assert job.description == (
+        "\u2728 Une exp\u00e9rience d\u2019un mod\u00e8le IA."
+    )
+    assert job.requirements.required_skills == [
+        "Ma\u00eetrise du d\u00e9veloppement",
+    ]

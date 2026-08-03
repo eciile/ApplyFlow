@@ -8,6 +8,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from app.text_utils import repair_utf8_mojibake
 
 BLOCKED_HOSTNAMES = {
     "localhost",
@@ -85,6 +86,66 @@ class JobPageFetchResponse(BaseModel):
     redirect_count: int
     content_sha256: str
 
+class JobRequirements(BaseModel):
+    """Skills and languages requested by a job posting."""
+
+    required_skills: list[str] = Field(
+        default_factory=list
+    )
+    preferred_skills: list[str] = Field(
+        default_factory=list
+    )
+    languages: list[str] = Field(
+        default_factory=list
+    )
+
+    @field_validator(
+        "required_skills",
+        "preferred_skills",
+        "languages",
+        mode="before",
+    )
+    @classmethod
+    def normalize_string_lists(
+        cls,
+        value: object,
+    ) -> list[str]:
+        """Normalize strings, remove blanks, and deduplicate."""
+
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            value = [value]
+
+        if not isinstance(value, list):
+            raise ValueError(
+                "Requirements must be provided as a list."
+            )
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            if not isinstance(item, str):
+                continue
+
+            cleaned = repair_utf8_mojibake(
+                " ".join(item.split())
+            )
+
+            if not cleaned:
+                continue
+
+            comparison_key = cleaned.casefold()
+
+            if comparison_key in seen:
+                continue
+
+            seen.add(comparison_key)
+            normalized.append(cleaned)
+
+        return normalized
 
 class ExtractedJobPosting(BaseModel):
     """Structured information extracted from a job posting."""
@@ -102,11 +163,15 @@ class ExtractedJobPosting(BaseModel):
     employment_types: list[str] = Field(
         default_factory=list
     )
+    requirements: JobRequirements = Field(
+    default_factory=JobRequirements
+    )
     date_posted: str | None = None
     valid_through: str | None = None
     application_url: str
 
     @field_validator(
+        "title",
         "company",
         "location",
         "description",
@@ -120,7 +185,9 @@ class ExtractedJobPosting(BaseModel):
         value: object,
     ) -> object:
         if isinstance(value, str):
-            cleaned = value.strip()
+            cleaned = repair_utf8_mojibake(
+                value.strip()
+            )
             return cleaned or None
 
         return value
@@ -147,7 +214,7 @@ class ExtractedJobPosting(BaseModel):
 
         return list(
             dict.fromkeys(
-                item.strip()
+                repair_utf8_mojibake(item.strip())
                 for item in value
                 if isinstance(item, str)
                 and item.strip()
@@ -207,10 +274,14 @@ class StoredJobResponse(BaseModel):
     location: str | None
     description: str | None
     employment_types: list[str]
+    required_skills: list[str]
+    preferred_skills: list[str]
+    languages: list[str]
     date_posted: str | None
     valid_through: str | None
     created_at: datetime
     extraction_method: str
+    
 
 
 class JobImportResponse(BaseModel):
