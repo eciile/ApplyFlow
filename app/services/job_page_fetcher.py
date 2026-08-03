@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from urllib.parse import urljoin
 import httpx2
+from app.text_utils import repair_utf8_mojibake
 from app.services.url_security import (
     UnsafeUrlError,
     ensure_public_url,
@@ -221,9 +222,9 @@ async def _fetch_with_client(
                 content_bytes = bytes(content)
                 encoding = response.encoding or "utf-8"
 
-                html = content_bytes.decode(
-                    encoding,
-                    errors="replace",
+                html = _decode_html_bytes(
+                    content_bytes,
+                    fallback_encoding=encoding,
                 )
 
                 return FetchedJobPage(
@@ -255,3 +256,45 @@ async def _fetch_with_client(
             raise JobPageConnectionError(
                 "The website could not be reached."
             ) from exc
+
+def _decode_html_bytes(
+    content: bytes,
+    fallback_encoding: str | None,
+) -> str:
+    """
+    Decode HTML while preferring UTF-8 over an incorrectly
+    declared response encoding.
+    """
+
+    candidate_encodings = [
+        "utf-8",
+        fallback_encoding,
+        "windows-1252",
+    ]
+
+    tried: set[str] = set()
+
+    for candidate in candidate_encodings:
+        if not candidate:
+            continue
+
+        normalized = candidate.casefold()
+
+        if normalized in tried:
+            continue
+
+        tried.add(normalized)
+
+        try:
+            return repair_utf8_mojibake(
+                content.decode(candidate)
+            )
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    return repair_utf8_mojibake(
+        content.decode(
+            "utf-8",
+            errors="replace",
+        )
+    )

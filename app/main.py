@@ -4,6 +4,7 @@ from fastapi import (
     status,
     Depends,
     Response,
+    Request,
 )
 from app.schemas import (
     JobPageFetchResponse,
@@ -58,6 +59,24 @@ app = FastAPI(
     ),
     version="0.2.0",
 )
+
+
+@app.middleware("http")
+async def add_utf8_charset_to_json(
+    request: Request,
+    call_next,
+):
+    """Help legacy clients decode JSON responses as UTF-8."""
+
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+
+    if content_type.casefold() == "application/json":
+        response.headers["content-type"] = (
+            "application/json; charset=utf-8"
+        )
+
+    return response
 
 
 @app.get("/health", tags=["System"])
@@ -326,6 +345,13 @@ async def import_job(
         location=extracted_job.location,
         description=extracted_job.description,
         employment_types=extracted_job.employment_types,
+        required_skills=(
+            extracted_job.requirements.required_skills
+        ),
+        preferred_skills=(
+            extracted_job.requirements.preferred_skills
+        ),
+        languages=extracted_job.requirements.languages,
         date_posted=extracted_job.date_posted,
         valid_through=extracted_job.valid_through,
     )

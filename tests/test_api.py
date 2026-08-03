@@ -14,11 +14,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_session
-from app.schemas import ExtractedJobPosting
+from app.schemas import ExtractedJobPosting, JobRequirements
 from app.services.job_sources import JobExtractionResult
 from types import SimpleNamespace
-
-from app.schemas import ExtractedJobPosting
 
 client = TestClient(app)
 
@@ -61,6 +59,9 @@ def test_health_check() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
+    assert response.headers["content-type"] == (
+        "application/json; charset=utf-8"
+    )
 
 
 def test_valid_job_url() -> None:
@@ -402,6 +403,11 @@ def test_import_job_is_saved_without_duplicates(
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
 
+    jobs = list_response.json()
+
+    assert jobs[0]["required_skills"] == []
+    assert jobs[0]["preferred_skills"] == []
+    assert jobs[0]["languages"] == []
 def test_extract_endpoint_uses_greenhouse_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -415,6 +421,21 @@ def test_extract_endpoint_uses_greenhouse_adapter(
                 location="Paris, France",
                 description="Build reliable data pipelines.",
                 employment_types=[],
+                requirements=JobRequirements(
+                required_skills=[
+                    "Python",
+                    "SQL",
+                    "FastAPI",
+                ],
+                preferred_skills=[
+                    "Docker",
+                    "AWS",
+                ],
+                languages=[
+                    "French",
+                    "English",
+                ],
+            ),
                 date_posted=None,
                 valid_through=None,
                 application_url=url,
@@ -600,6 +621,21 @@ def test_import_persists_llm_extracted_job(
                     "Build and maintain reliable data pipelines."
                 ),
                 employment_types=["FULL_TIME"],
+                requirements=JobRequirements(
+                    required_skills=[
+                        "Python",
+                        "SQL",
+                        "FastAPI",
+                    ],
+                    preferred_skills=[
+                        "Docker",
+                        "AWS",
+                    ],
+                    languages=[
+                        "French",
+                        "English",
+                    ],
+                ),
                 date_posted=None,
                 valid_through=None,
                 application_url=content.source_url,
@@ -647,3 +683,16 @@ def test_import_persists_llm_extracted_job(
         list_response.json()[0]["extraction_method"]
         == "llm_html"
     )
+    assert data["job"]["required_skills"] == [
+        "Python",
+        "SQL",
+        "FastAPI",
+    ]
+    assert data["job"]["preferred_skills"] == [
+        "Docker",
+        "AWS",
+    ]
+    assert data["job"]["languages"] == [
+        "French",
+        "English",
+    ]
