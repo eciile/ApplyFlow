@@ -26,6 +26,17 @@ from app.services.job_sources import (
     LeverReference,
     extract_ats_job,
 )
+from app.services.generic_html_extractor import (
+    GenericContentExtractionError,
+    extract_generic_job_content,
+)
+from types import SimpleNamespace
+
+from app.config import Settings
+from app.schemas import GenericJobContent
+from app.services.llm_job_extractor import (
+    OllamaJobExtractionClient,
+)
 
 async def allow_mock_url(_: str) -> None:
     """
@@ -576,3 +587,188 @@ def test_extract_ats_job_dispatcher() -> None:
     )
 
     assert generic_result is None
+
+def test_extract_generic_job_content() -> None:
+    html = """
+    <html>
+      <head>
+        <title>
+          Junior Data Engineer | Example Company
+        </title>
+        <style>
+          body { font-family: sans-serif; }
+        </style>
+      </head>
+      <body>
+        <nav>
+          Home Careers About Contact
+        </nav>
+
+        <main>
+          <article>
+            <h1>Junior Data Engineer</h1>
+
+            <p>
+              Example Company is looking for a Junior Data
+              Engineer to build and maintain reliable data
+              pipelines for analytics and machine-learning
+              applications.
+            </p>
+
+            <h2>Responsibilities</h2>
+
+            <p>
+              Develop Python and SQL pipelines, validate data
+              quality, improve processing reliability, and
+              collaborate with analytics and engineering teams.
+            </p>
+
+            <h2>Requirements</h2>
+
+            <p>
+              Experience with Python, SQL, APIs, relational
+              databases, automated testing, and basic cloud
+              or container technologies is preferred.
+            </p>
+          </article>
+        </main>
+
+        <footer>
+          Privacy policy and cookie settings
+        </footer>
+
+        <script>
+          console.log("tracking");
+        </script>
+      </body>
+    </html>
+    """
+
+    result = extract_generic_job_content(
+        html=html,
+        source_url=(
+            "https://company.example.com/"
+            "careers/junior-data-engineer"
+        ),
+    )
+
+    assert result.page_title == "Junior Data Engineer"
+    assert result.source_url == (
+        "https://company.example.com/"
+        "careers/junior-data-engineer"
+    )
+    assert "Junior Data Engineer" in result.text
+    assert "Develop Python and SQL pipelines" in result.text
+    assert "console.log" not in result.text
+    assert len(result.text) >= 200
+
+def test_generic_content_rejects_short_page() -> None:
+    html = """
+    <html>
+      <body>
+        <p>Enable JavaScript to continue.</p>
+      </body>
+    </html>
+    """
+
+    with pytest.raises(
+        GenericContentExtractionError,
+        match="useful job information",
+    ):
+        extract_generic_job_content(
+            html=html,
+            source_url="https://company.example.com/jobs/123",
+        )
+
+def test_ollama_job_extraction_client() -> None:
+    class FakeOllamaClient:
+        def __init__(self) -> None:
+            self.received_model: str | None = None
+            self.received_messages: list[dict] | None = None
+            self.received_format: dict | None = None
+
+        async def chat(
+            self,
+            *,
+            model,
+            messages,
+            format,
+            options,
+            think,
+            stream,
+            keep_alive,
+        ):
+            self.received_model = model
+            self.received_messages = messages
+            self.received_format = format
+
+            return SimpleNamespace(
+                message=SimpleNamespace(
+                    content="""
+                    {
+                      "title": "Junior Data Engineer",
+                      "company": "Example Company",
+                      "location": "Paris, France",
+                      "description": "Build reliable data pipelines.",
+                      "employment_types": ["FULL_TIME"],
+                      "date_posted": null,
+                      "valid_through": null,
+                      "application_url": "https://invented.example.com"
+                    }
+                    """
+                )
+            )
+
+    async def run_test():
+        fake_client = FakeOllamaClient()
+
+        settings = Settings(
+            ollama_host="http://localhost:11434",
+            ollama_model="test-model",
+            ollama_timeout_seconds=10,
+        )
+
+        extraction_client = OllamaJobExtractionClient(
+            settings=settings,
+            client=fake_client,
+        )
+
+        content = GenericJobContent(
+            page_title=(
+                "Junior Data Engineer | Example Company"
+            ),
+            text=(
+                "Example Company is looking for a Junior Data "
+                "Engineer to build reliable Python and SQL data "
+                "pipelines. The candidate will validate data "
+                "quality, maintain APIs, write automated tests, "
+                "and collaborate with engineering teams. This "
+                "is a full-time role based in Paris, France."
+            ),
+            source_url=(
+                "https://company.example.com/"
+                "careers/junior-data-engineer"
+            ),
+        )
+
+        job = await extraction_client.extract_job(content)
+
+        return job, fake_client
+
+    job, fake_client = asyncio.run(run_test())
+
+    assert job.title == "Junior Data Engineer"
+    assert job.company == "Example Company"
+    assert job.location == "Paris, France"
+    assert job.employment_types == ["FULL_TIME"]
+
+    # ApplyFlow must use the trusted source URL, not the
+    # URL returned by the model.
+    assert job.application_url == (
+        "https://company.example.com/"
+        "careers/junior-data-engineer"
+    )
+
+    assert fake_client.received_model == "test-model"
+    assert fake_client.received_messages is not None
+    assert fake_client.received_format is not None

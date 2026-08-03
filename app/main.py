@@ -41,6 +41,14 @@ from app.services.job_sources import (
     JobSourceNotFoundError,
     extract_ats_job,
 )
+from app.services.generic_html_extractor import (
+    GenericContentExtractionError,
+    extract_generic_job_content,
+)
+from app.services.llm_job_extractor import (
+    LlmJobExtractionError,
+    get_llm_job_extraction_client,
+)
 
 app = FastAPI(
     title="ApplyFlow API",
@@ -150,7 +158,7 @@ async def _extract_structured_job(
 
     except JobSourceNotFoundError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -170,15 +178,44 @@ async def _extract_structured_job(
             html=page.html,
             source_url=page.final_url,
         )
-    except JobPostingNotFoundError as exc:
+    except JobPostingNotFoundError:
+        # The page has no usable JobPosting JSON-LD.
+        # Continue with the generic HTML and LLM fallback.
+        pass
+    else:
+        return JobExtractionResult(
+            job=job,
+            extraction_method="json_ld",
+            final_url=page.final_url,
+            content_sha256=page.content_sha256,
+        )
+
+    try:
+        generic_content = extract_generic_job_content(
+            html=page.html,
+            source_url=page.final_url,
+        )
+    except GenericContentExtractionError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+
+    llm_client = get_llm_job_extraction_client()
+
+    try:
+        job = await llm_client.extract_job(
+            generic_content
+        )
+    except LlmJobExtractionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
         ) from exc
 
     return JobExtractionResult(
         job=job,
-        extraction_method="json_ld",
+        extraction_method="llm_html",
         final_url=page.final_url,
         content_sha256=page.content_sha256,
     )
@@ -274,7 +311,7 @@ async def import_job(
         extracted_job = result.job
     except JobPostingNotFoundError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
