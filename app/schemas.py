@@ -2,10 +2,11 @@ from ipaddress import ip_address
 from datetime import datetime
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     HttpUrl,
     field_validator,
-    ConfigDict,
+    model_validator,
 )
 
 BLOCKED_HOSTNAMES = {
@@ -86,9 +87,15 @@ class JobPageFetchResponse(BaseModel):
 
 
 class ExtractedJobPosting(BaseModel):
-    """Structured information extracted from JobPosting JSON-LD."""
+    """Structured information extracted from a job posting."""
 
-    title: str
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    title: str = Field(
+        min_length=1,
+    )
     company: str | None = None
     location: str | None = None
     description: str | None = None
@@ -99,6 +106,82 @@ class ExtractedJobPosting(BaseModel):
     valid_through: str | None = None
     application_url: str
 
+    @field_validator(
+        "company",
+        "location",
+        "description",
+        "date_posted",
+        "valid_through",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_values_to_none(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+
+        return value
+
+    @field_validator(
+        "employment_types",
+        mode="before",
+    )
+    @classmethod
+    def normalize_employment_types(
+        cls,
+        value: object,
+    ) -> list[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            value = [value]
+
+        if not isinstance(value, list):
+            raise ValueError(
+                "Employment types must be a list."
+            )
+
+        return list(
+            dict.fromkeys(
+                item.strip()
+                for item in value
+                if isinstance(item, str)
+                and item.strip()
+            )
+        )
+
+    @model_validator(mode="after")
+    def ensure_useful_content(
+        self,
+    ) -> "ExtractedJobPosting":
+        useful_optional_fields = [
+            self.company,
+            self.location,
+            self.description,
+            self.employment_types,
+        ]
+
+        if not any(useful_optional_fields):
+            raise ValueError(
+                "The extracted job does not contain "
+                "enough useful information."
+            )
+
+        return self
+
+class GenericJobContent(BaseModel):
+    """Content and metadata extracted from a generic job page."""
+
+    page_title: str | None = None
+    text: str = Field(min_length=200)
+    source_url: str
+    metadata: dict[str, str] = Field(
+        default_factory=dict
+    )
 
 class JobExtractionResponse(BaseModel):
     """Successful structured job-extraction response."""

@@ -16,6 +16,9 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_session
 from app.schemas import ExtractedJobPosting
 from app.services.job_sources import JobExtractionResult
+from types import SimpleNamespace
+
+from app.schemas import ExtractedJobPosting
 
 client = TestClient(app)
 
@@ -252,7 +255,7 @@ def test_extract_job_posting_jsonld(
     assert job["valid_through"] == "2026-08-20"
 
 
-def test_extract_returns_422_without_jobposting(
+def test_extract_returns_422_without_usable_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     html = """
@@ -291,9 +294,8 @@ def test_extract_returns_422_without_jobposting(
     )
 
     assert response.status_code == 422
-    assert response.json()["detail"] == (
-        "No usable JobPosting JSON-LD was found "
-        "on the page."
+    assert "useful job information" in (
+        response.json()["detail"]
     )
 
 
@@ -445,3 +447,203 @@ def test_extract_endpoint_uses_greenhouse_adapter(
     assert data["extraction_method"] == "greenhouse"
     assert data["job"]["title"] == "Junior Data Engineer"
     assert data["job"]["company"] == "Example Company"
+
+def test_extract_uses_llm_for_generic_html(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html = """
+    <html>
+      <head>
+        <title>
+          Junior Data Engineer | Example Company
+        </title>
+      </head>
+      <body>
+        <main>
+          <h1>Junior Data Engineer</h1>
+
+          <p>
+            Example Company is looking for a Junior Data
+            Engineer to develop and maintain reliable Python
+            and SQL data pipelines for analytics applications.
+          </p>
+
+          <p>
+            The role involves data-quality validation,
+            automated testing, API integration, database
+            development, and collaboration with engineering
+            and analytics teams.
+          </p>
+
+          <p>
+            This is a full-time position based in Paris,
+            France. Candidates should have experience with
+            Python, SQL, relational databases, and REST APIs.
+          </p>
+        </main>
+      </body>
+    </html>
+    """
+
+    async def fake_fetch_job_page(
+        url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=url,
+            html=html,
+        )
+
+    class FakeLlmClient:
+        async def extract_job(
+            self,
+            content,
+        ) -> ExtractedJobPosting:
+            assert "Junior Data Engineer" in content.text
+
+            return ExtractedJobPosting(
+                title="Junior Data Engineer",
+                company="Example Company",
+                location="Paris, France",
+                description=(
+                    "Develop and maintain reliable data pipelines."
+                ),
+                employment_types=["FULL_TIME"],
+                date_posted=None,
+                valid_through=None,
+                application_url=content.source_url,
+            )
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_job_page",
+        fake_fetch_job_page,
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_llm_job_extraction_client",
+        lambda: FakeLlmClient(),
+    )
+
+    response = client.post(
+        "/jobs/extract",
+        json={
+            "url": (
+                "https://company.example.com/"
+                "careers/junior-data-engineer"
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["extracted"] is True
+    assert data["extraction_method"] == "llm_html"
+    assert data["job"]["title"] == "Junior Data Engineer"
+    assert data["job"]["company"] == "Example Company"
+    assert data["job"]["location"] == "Paris, France"
+
+def test_import_persists_llm_extracted_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    html = """
+    <html>
+      <head>
+        <title>
+          Junior Data Engineer | Example Company
+        </title>
+      </head>
+      <body>
+        <main>
+          <h1>Junior Data Engineer</h1>
+
+          <p>
+            Example Company is hiring a Junior Data Engineer
+            in Paris, France. This is a full-time role.
+          </p>
+
+          <p>
+            The candidate will build Python and SQL pipelines,
+            integrate APIs, validate data quality, write tests,
+            and collaborate with engineering teams.
+          </p>
+
+          <p>
+            Applicants should have experience with relational
+            databases, Git, Docker, and data-processing systems.
+          </p>
+        </main>
+      </body>
+    </html>
+    """
+
+    async def fake_fetch_job_page(
+        url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=url,
+            html=html,
+        )
+
+    class FakeLlmClient:
+        async def extract_job(
+            self,
+            content,
+        ) -> ExtractedJobPosting:
+            return ExtractedJobPosting(
+                title="Junior Data Engineer",
+                company="Example Company",
+                location="Paris, France",
+                description=(
+                    "Build and maintain reliable data pipelines."
+                ),
+                employment_types=["FULL_TIME"],
+                date_posted=None,
+                valid_through=None,
+                application_url=content.source_url,
+            )
+
+    monkeypatch.setattr(
+        main_module,
+        "fetch_job_page",
+        fake_fetch_job_page,
+    )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_llm_job_extraction_client",
+        lambda: FakeLlmClient(),
+    )
+
+    response = client.post(
+        "/jobs/import",
+        json={
+            "url": (
+                "https://company.example.com/"
+                "careers/junior-data-engineer"
+            )
+        },
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert data["created"] is True
+    assert data["job"]["title"] == "Junior Data Engineer"
+    assert data["job"]["company"] == "Example Company"
+    assert data["job"]["employment_types"] == [
+        "FULL_TIME"
+    ]
+    assert data["job"]["extraction_method"] == "llm_html"
+
+    list_response = client.get("/jobs")
+
+    assert list_response.status_code == 200
+    assert len(list_response.json()) == 1
+    assert (
+        list_response.json()[0]["extraction_method"]
+        == "llm_html"
+    )
