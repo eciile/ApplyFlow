@@ -13,6 +13,8 @@ from app.schemas import (
     JobExtractionResponse,
     JobImportResponse,
     StoredJobResponse,
+    CandidateProfileResponse,
+    CandidateProfileInput,
 )
 from app.services.job_page_fetcher import (
     FetchedJobPage,
@@ -35,7 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_session
-from app.models import Job
+from app.models import Job, CandidateProfile
 from app.services.job_sources import (
     JobExtractionResult,
     JobSourceError,
@@ -409,3 +411,63 @@ def list_jobs(
         StoredJobResponse.model_validate(job)
         for job in jobs
     ]
+
+@app.get(
+    "/profile",
+    response_model=CandidateProfileResponse,
+)
+def get_candidate_profile(
+    db: Session = Depends(get_session),
+) -> CandidateProfile:
+    """Return the local candidate profile."""
+
+    profile = db.scalar(
+        select(CandidateProfile).order_by(
+            CandidateProfile.id.asc()
+        )
+    )
+
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate profile not found.",
+        )
+
+    return profile
+
+@app.put(
+    "/profile",
+    response_model=CandidateProfileResponse,
+)
+def put_candidate_profile(
+    profile_input: CandidateProfileInput,
+    db: Session = Depends(get_session),
+) -> CandidateProfile:
+    """Create or replace the local candidate profile."""
+
+    profile = db.scalar(
+        select(CandidateProfile).order_by(
+            CandidateProfile.id.asc()
+        )
+    )
+
+    profile_data = profile_input.model_dump()
+
+    # Convert Pydantic language objects into JSON-compatible
+    # dictionaries before storing them.
+    profile_data["languages"] = [
+        language.model_dump()
+        for language in profile_input.languages
+    ]
+
+    if profile is None:
+        profile = CandidateProfile(**profile_data)
+        db.add(profile)
+    else:
+        for field_name, value in profile_data.items():
+            setattr(profile, field_name, value)
+
+    db.commit()
+    db.refresh(profile)
+
+    return profile
