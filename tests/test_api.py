@@ -1,4 +1,5 @@
 import pytest
+from datetime import date
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -16,6 +17,9 @@ from sqlalchemy.pool import StaticPool
 from app.database import Base, get_session
 from app.schemas import ExtractedJobPosting, JobRequirements
 from app.services.job_sources import JobExtractionResult
+from app.services.application_tracking import (
+    assess_possible_ghosting,
+)
 from types import SimpleNamespace
 
 client = TestClient(app)
@@ -348,6 +352,56 @@ def _fake_page(
         redirect_count=0,
         content_sha256="a" * 64,
     )
+
+
+def _import_application_test_job(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    url: str = "https://example.com/jobs/application-test",
+) -> dict:
+    """Import one deterministic job for application endpoint tests."""
+
+    async def fake_retrieve_job_page(
+        source_url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=source_url,
+            html="<html><body>job</body></html>",
+        )
+
+    async def fake_extract_structured_job(
+        source_url: str,
+    ) -> JobExtractionResult:
+        return JobExtractionResult(
+            job=ExtractedJobPosting(
+                title="AI Engineer",
+                company="Example Company",
+                description="Build AI systems.",
+                application_url=source_url,
+            ),
+            extraction_method="json_ld",
+            final_url=source_url,
+            content_sha256="e" * 64,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "_retrieve_job_page",
+        fake_retrieve_job_page,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_extract_structured_job",
+        fake_extract_structured_job,
+    )
+
+    response = client.post(
+        "/jobs/import",
+        json={"url": url},
+    )
+    assert response.status_code == 201
+
+    return response.json()["job"]
 
 def test_import_job_is_saved_without_duplicates(
     monkeypatch: pytest.MonkeyPatch,
@@ -985,3 +1039,243 @@ def test_match_geocodes_and_caches_missing_coordinates(
         "Cesson-Sévigné, France",
         "Rennes, France",
     ]
+
+
+def test_application_reports_latest_completed_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/jobs/follow-up-test"
+
+    async def fake_retrieve_job_page(
+        source_url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=source_url,
+            html="<html><body>job</body></html>",
+        )
+
+    async def fake_extract_structured_job(
+        source_url: str,
+    ) -> JobExtractionResult:
+        return JobExtractionResult(
+            job=ExtractedJobPosting(
+                title="AI Engineer",
+                company="Example",
+                description="Build AI systems.",
+                application_url=source_url,
+            ),
+            extraction_method="json_ld",
+            final_url=source_url,
+            content_sha256="d" * 64,
+        )
+
+    monkeypatch.setattr(
+        main_module,
+        "_retrieve_job_page",
+        fake_retrieve_job_page,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_extract_structured_job",
+        fake_extract_structured_job,
+    )
+
+    import_response = client.post(
+        "/jobs/import",
+        json={"url": url},
+    )
+    assert import_response.status_code == 201
+
+    create_response = client.put(
+        "/jobs/1/application",
+        json={
+            "status": "applied",
+            "follow_up_at": "2026-08-10",
+        },
+    )
+    assert create_response.status_code == 200
+    assert create_response.json()["last_follow_up_sent_at"] is None
+
+    for occurred_at in (
+        "2026-08-03T09:00:00+00:00",
+        "2026-08-04T16:50:23.651947+00:00",
+    ):
+        event_response = client.post(
+            "/jobs/1/application/events",
+            json={
+                "event_type": "follow_up_sent",
+                "occurred_at": occurred_at,
+            },
+        )
+        assert event_response.status_code == 201
+
+    update_response = client.put(
+        "/jobs/1/application",
+        json={
+            "status": "interview",
+            "follow_up_at": None,
+        },
+    )
+    assert update_response.status_code == 200
+
+    application = update_response.json()
+    assert application["follow_up_at"] is None
+    assert application["last_follow_up_sent_at"].startswith(
+        "2026-08-04T16:50:23.651947"
+    )
+
+    list_response = client.get("/applications")
+    assert list_response.status_code == 200
+    listed_application = list_response.json()[0]
+    assert listed_application["follow_up_at"] is None
+    assert listed_application["last_follow_up_sent_at"].startswith(
+        "2026-08-04T16:50:23.651947"
+    )
+
+
+def test_put_application_creates_then_updates_single_record(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _import_application_test_job(monkeypatch)
+    endpoint = f"/jobs/{job['id']}/application"
+
+    create_response = client.put(
+        endpoint,
+        json={
+            "status": "preparing",
+            "follow_up_at": "2026-08-12",
+            "next_action": "Tailor cover letter",
+            "notes": "Initial tracking note",
+        },
+    )
+    assert create_response.status_code == 200
+    created = create_response.json()
+    assert created["job_id"] == job["id"]
+    assert created["status"] == "preparing"
+    assert created["follow_up_at"] == "2026-08-12"
+    assert len(created["events"]) == 1
+
+    update_response = client.put(
+        endpoint,
+        json={
+            "status": "applied",
+            "applied_at": "2026-08-04",
+            "follow_up_at": "2026-08-11",
+            "next_action": "Send follow-up",
+            "notes": "Application submitted",
+        },
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["id"] == created["id"]
+    assert updated["status"] == "applied"
+    assert updated["applied_at"] == "2026-08-04"
+    assert updated["next_action"] == "Send follow-up"
+    assert len(updated["events"]) == 2
+
+    list_response = client.get("/applications")
+    assert list_response.status_code == 200
+    applications = list_response.json()
+    assert len(applications) == 1
+    assert applications[0]["application_id"] == created["id"]
+    assert applications[0]["job_id"] == job["id"]
+    assert applications[0]["job_title"] == "AI Engineer"
+    assert applications[0]["company"] == "Example Company"
+    assert applications[0]["status"] == "applied"
+
+
+def test_employer_response_clears_provisional_ghosting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _import_application_test_job(monkeypatch)
+    endpoint = f"/jobs/{job['id']}/application"
+
+    create_response = client.put(
+        endpoint,
+        json={
+            "status": "applied",
+            "applied_at": "2000-01-01",
+        },
+    )
+    assert create_response.status_code == 200
+    before_response = create_response.json()
+    assert before_response["possibly_ghosted"] is True
+    assert before_response["days_without_response"] >= 21
+
+    event_response = client.post(
+        f"{endpoint}/events",
+        json={
+            "event_type": "employer_response",
+            "occurred_at": "2026-08-04T12:30:00+00:00",
+            "notes": "Recruiter scheduled a screening call.",
+        },
+    )
+    assert event_response.status_code == 201
+    after_response = event_response.json()
+    assert after_response["possibly_ghosted"] is False
+    assert after_response["days_without_response"] is None
+    assert after_response["last_employer_response_at"].startswith(
+        "2026-08-04T12:30:00"
+    )
+    employer_response_events = [
+        event
+        for event in after_response["events"]
+        if event["event_type"] == "employer_response"
+    ]
+    assert len(employer_response_events) == 1
+    assert employer_response_events[0]["occurred_at"].startswith(
+        "2026-08-04T12:30:00"
+    )
+
+
+def test_application_endpoints_distinguish_missing_records(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    missing_job_response = client.put(
+        "/jobs/999/application",
+        json={"status": "saved"},
+    )
+    assert missing_job_response.status_code == 404
+    assert missing_job_response.json() == {
+        "detail": "Job not found."
+    }
+
+    job = _import_application_test_job(monkeypatch)
+
+    missing_application_response = client.get(
+        f"/jobs/{job['id']}/application"
+    )
+    assert missing_application_response.status_code == 404
+    assert missing_application_response.json() == {
+        "detail": "Job application not found."
+    }
+
+    missing_application_event_response = client.post(
+        f"/jobs/{job['id']}/application/events",
+        json={"event_type": "follow_up_sent"},
+    )
+    assert missing_application_event_response.status_code == 404
+    assert missing_application_event_response.json() == {
+        "detail": "Job application not found."
+    }
+
+
+def test_provisional_ghosting_starts_at_twenty_one_days() -> None:
+    before_threshold = assess_possible_ghosting(
+        status="applied",
+        applied_at=date(2026, 7, 15),
+        last_employer_response_at=None,
+        current_date=date(2026, 8, 4),
+    )
+    at_threshold = assess_possible_ghosting(
+        status="applied",
+        applied_at=date(2026, 7, 14),
+        last_employer_response_at=None,
+        current_date=date(2026, 8, 4),
+    )
+
+    assert before_threshold.days_without_response == 20
+    assert before_threshold.possibly_ghosted is False
+    assert at_threshold.days_without_response == 21
+    assert at_threshold.possibly_ghosted is True
+    assert at_threshold.ghosting_threshold_days == 21

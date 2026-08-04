@@ -1,6 +1,7 @@
 from ipaddress import ip_address
-from datetime import datetime
-from pydantic import (
+from datetime import date, datetime
+from enum import StrEnum
+from pydantic import (  # type: ignore[reportMissingImports]
     BaseModel,
     ConfigDict,
     Field,
@@ -521,3 +522,142 @@ def _skill_comparison_key(
     return " ".join(
         value.casefold().split()
     )
+
+class ApplicationStatus(StrEnum):
+    SAVED = "saved"
+    PREPARING = "preparing"
+    APPLIED = "applied"
+    INTERVIEW = "interview"
+    OFFER = "offer"
+    REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"
+
+
+class ApplicationEventType(StrEnum):
+    STATUS_CHANGED = "status_changed"
+    APPLIED = "applied"
+    FOLLOW_UP_SENT = "follow_up_sent"
+    EMPLOYER_RESPONSE = "employer_response"
+    INTERVIEW = "interview"
+    OFFER = "offer"
+    REJECTION = "rejection"
+    NOTE_ADDED = "note_added"
+
+
+class JobApplicationInput(BaseModel):
+    """Create or update tracking information for a job."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    status: ApplicationStatus
+    applied_at: date | None = None
+    follow_up_at: date | None = None
+    next_action: str | None = None
+    notes: str | None = None
+
+    @field_validator(
+        "next_action",
+        "notes",
+        mode="before",
+    )
+    @classmethod
+    def blank_strings_to_none(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+
+        return value
+
+
+class ApplicationEventInput(BaseModel):
+    """A dated event in an application's history."""
+
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+
+    event_type: ApplicationEventType
+    occurred_at: datetime | None = None
+    notes: str | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def blank_notes_to_none(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+
+        return value
+
+class ApplicationEventResponse(BaseModel):
+    """An event returned in an application's history."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    event_type: ApplicationEventType
+    occurred_at: datetime
+    notes: str | None
+    created_at: datetime
+
+
+class JobApplicationResponse(BaseModel):
+    """Stored application with provisional ghosting information."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    job_id: int
+    status: ApplicationStatus
+
+    applied_at: date | None
+    follow_up_at: date | None
+    last_follow_up_sent_at: datetime | None
+    last_activity_at: datetime
+    last_employer_response_at: datetime | None
+
+    next_action: str | None
+    notes: str | None
+
+    days_without_response: int | None
+    possibly_ghosted: bool
+    ghosting_threshold_days: int
+
+    events: list[ApplicationEventResponse] = Field(
+        default_factory=list,
+    )
+
+    created_at: datetime
+    updated_at: datetime
+
+class ApplicationListItemResponse(BaseModel):
+    """Compact application summary for the tracking list."""
+
+    application_id: int
+    job_id: int
+    job_title: str
+    company: str | None
+
+    status: ApplicationStatus
+    applied_at: date | None
+    follow_up_at: date | None
+    last_follow_up_sent_at: datetime | None
+
+    last_activity_at: datetime
+    last_employer_response_at: datetime | None
+
+    next_action: str | None
+
+    days_without_response: int | None
+    possibly_ghosted: bool
+    ghosting_threshold_days: int

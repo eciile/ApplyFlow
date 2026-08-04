@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    JSON,
+    Date,
     DateTime,
+    ForeignKey,
+    Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
     Float,
+    JSON,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 
@@ -129,6 +133,15 @@ class Job(Base):
         default=utc_now,
     )
 
+    application: Mapped[
+        "JobApplication | None"
+    ] = relationship(
+        back_populates="job",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
+    )
+
 class CandidateProfile(Base):
     """The local candidate profile used for job matching."""
 
@@ -218,4 +231,136 @@ class CandidateProfile(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+class JobApplication(Base):
+    """Tracks the current state of one job application."""
+
+    __tablename__ = "job_applications"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id",
+            name="uq_job_applications_job_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
+
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "jobs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="saved",
+    )
+
+    applied_at: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    follow_up_at: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    last_employer_response_at: Mapped[
+        datetime | None
+    ] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    next_action: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    job: Mapped["Job"] = relationship(
+        back_populates="application",
+    )
+
+    events: Mapped[list["ApplicationEvent"]] = (
+        relationship(
+            back_populates="application",
+            cascade="all, delete-orphan",
+            order_by="ApplicationEvent.occurred_at",
+        )
+    )
+
+
+class ApplicationEvent(Base):
+    """An immutable event in an application's history."""
+
+    __tablename__ = "application_events"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
+
+    application_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "job_applications.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+    )
+
+    event_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    application: Mapped["JobApplication"] = (
+        relationship(
+            back_populates="events",
+        )
     )
