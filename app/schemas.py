@@ -289,3 +289,114 @@ class JobImportResponse(BaseModel):
 
     created: bool
     job: StoredJobResponse
+
+class CandidateLanguage(BaseModel):
+    """a spoken language and the candidate's proficiency level"""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1)
+    level: str | None = None
+    @field_validator("level", mode="before")
+    @classmethod
+    def blank_level_to_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            cleaned = repair_utf8_mojibake(
+                value.strip()
+            )
+            return cleaned or None
+        return value
+
+class CandidateProfileInput(BaseModel):
+    """Candidate profile input for job matching."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    full_name: str = Field(min_length=1)
+    headline: str | None = None
+    location: str | None = None
+    years_of_experience: float | None = Field(
+        default=None,
+        ge=0,
+    )
+
+    skills: list[str] = Field(
+        default_factory=list,
+    )
+    languages: list[CandidateLanguage] = Field(
+        default_factory=list,
+    )
+    preferred_locations: list[str] = Field(
+        default_factory=list,
+    )
+    preferred_employment_types: list[str] = Field(
+        default_factory=list,
+    )
+
+    @field_validator(
+        "headline",
+        "location",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_strings_to_none(
+        cls,
+        value: object,
+    ) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+
+        return value
+
+    @field_validator(
+        "skills",
+        "preferred_locations",
+        "preferred_employment_types",
+        mode="before",
+    )
+    @classmethod
+    def normalize_string_lists(
+        cls,
+        value: object,
+    ) -> list[str]:
+        if value is None:
+            return []
+
+        if isinstance(value, str):
+            value = [value]
+
+        if not isinstance(value, list):
+            raise ValueError(
+                "The value must be a list of strings."
+            )
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            if not isinstance(item, str):
+                continue
+
+            cleaned = " ".join(item.split())
+
+            if not cleaned:
+                continue
+
+            comparison_key = cleaned.casefold()
+
+            if comparison_key in seen:
+                continue
+
+            seen.add(comparison_key)
+            normalized.append(cleaned)
+
+        return normalized
+    
+class CandidateProfileResponse(
+    CandidateProfileInput
+):
+    """Stored candidate profile returned by the API."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+    id: int
+    created_at: datetime
+    updated_at: datetime

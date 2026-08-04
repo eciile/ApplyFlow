@@ -7,6 +7,8 @@ from sqlalchemy import (
     DateTime,
     String,
     Text,
+    func,
+    Float,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -105,4 +107,78 @@ class Job(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
+    )
+
+class CandidateProfile(Base):
+    """The local candidate profile used for job matching."""
+
+    __tablename__ = "candidate_profiles"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+    )
+
+    full_name: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+    )
+
+    headline: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    location: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
+
+    years_of_experience: Mapped[float | None] = (
+        mapped_column(
+            Float,
+            nullable=True,
+        )
+    )
+
+    skills: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
+
+    languages: Mapped[list[dict[str, str | None]]] = (
+        mapped_column(
+            JSON,
+            nullable=False,
+            default=list,
+        )
+    )
+
+    preferred_locations: Mapped[list[str]] = (
+        mapped_column(
+            JSON,
+            nullable=False,
+            default=list,
+        )
+    )
+
+    preferred_employment_types: Mapped[list[str]] = (
+        mapped_column(
+            JSON,
+            nullable=False,
+            default=list,
+        )
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )

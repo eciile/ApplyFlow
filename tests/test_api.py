@@ -696,3 +696,113 @@ def test_import_persists_llm_extracted_job(
         "French",
         "English",
     ]
+
+def test_get_candidate_profile_returns_404_when_missing(
+    isolated_database,
+) -> None:
+    with TestClient(app) as client:
+        response = client.get("/profile")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Candidate profile not found.",
+    }
+
+def test_put_candidate_profile_creates_and_updates_single_profile(
+    isolated_database,
+) -> None:
+    with TestClient(app) as client:
+        create_response = client.put(
+            "/profile",
+            json={
+                "full_name": "Test Candidate",
+                "headline": "Computer Engineering Graduate",
+                "location": "Rennes, France",
+                "years_of_experience": 1,
+                "skills": [
+                    "Python",
+                    "FastAPI",
+                    " python ",
+                    "",
+                ],
+                "languages": [
+                    {
+                        "name": "French",
+                        "level": "Professional",
+                    },
+                    {
+                        "name": "English",
+                        "level": "Fluent",
+                    },
+                ],
+                "preferred_locations": [
+                    "Rennes",
+                    "Remote",
+                    "rennes",
+                    "",
+                ],
+                "preferred_employment_types": [
+                    "PERMANENT",
+                ],
+            },
+        )
+
+        assert create_response.status_code == 200
+
+        created_profile = create_response.json()
+
+        update_response = client.put(
+            "/profile",
+            json={
+                "full_name": "Updated Candidate",
+                "headline": "Junior AI Engineer",
+                "location": "Paris, France",
+                "years_of_experience": 2,
+                "skills": [
+                    "Python",
+                    "PyTorch",
+                    "NLP",
+                ],
+                "languages": [
+                    {
+                        "name": "French",
+                        "level": "Professional",
+                    },
+                ],
+                "preferred_locations": [
+                    "Paris",
+                    "Remote",
+                ],
+                "preferred_employment_types": [
+                    "PERMANENT",
+                ],
+            },
+        )
+
+        get_response = client.get("/profile")
+
+    assert created_profile["id"] == 1
+    assert created_profile["skills"] == [
+        "Python",
+        "FastAPI",
+    ]
+    assert created_profile["preferred_locations"] == [
+        "Rennes",
+        "Remote",
+    ]
+
+    assert update_response.status_code == 200
+
+    updated_profile = update_response.json()
+
+    assert updated_profile["id"] == created_profile["id"]
+    assert updated_profile["full_name"] == "Updated Candidate"
+    assert updated_profile["skills"] == [
+        "Python",
+        "PyTorch",
+        "NLP",
+    ]
+
+    assert get_response.status_code == 200
+    assert get_response.json()["id"] == created_profile["id"]
+    assert get_response.json()["full_name"] == "Updated Candidate"
