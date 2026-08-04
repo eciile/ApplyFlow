@@ -87,21 +87,51 @@ class JobPageFetchResponse(BaseModel):
     content_sha256: str
 
 class JobRequirements(BaseModel):
-    """Skills and languages requested by a job posting."""
+    """Structured requirements requested by a job posting."""
 
     required_skills: list[str] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "Technical skills explicitly required from the candidate; "
+            "exclude company stack and technologies mentioned only in "
+            "descriptions or responsibilities."
+        ),
     )
     preferred_skills: list[str] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "Technical skills explicitly marked optional, preferred, "
+            "desirable, bonus, or nice to have."
+        ),
+    )
+    qualifications: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Explicit degrees, certifications, licences, experience, "
+            "academic or professional background, theoretical knowledge, "
+            "and formal eligibility criteria."
+        ),
+    )
+    soft_skills: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Interpersonal or behavioural abilities explicitly requested "
+            "from the candidate; never infer them from responsibilities."
+        ),
     )
     languages: list[str] = Field(
-        default_factory=list
+        default_factory=list,
+        description=(
+            "Spoken or written human languages explicitly required from "
+            "the candidate."
+        ),
     )
 
     @field_validator(
         "required_skills",
         "preferred_skills",
+        "qualifications",
+        "soft_skills",
         "languages",
         mode="before",
     )
@@ -110,8 +140,6 @@ class JobRequirements(BaseModel):
         cls,
         value: object,
     ) -> list[str]:
-        """Normalize strings, remove blanks, and deduplicate."""
-
         if value is None:
             return []
 
@@ -146,6 +174,28 @@ class JobRequirements(BaseModel):
             normalized.append(cleaned)
 
         return normalized
+
+    @model_validator(mode="after")
+    def remove_required_preferred_overlap(
+        self,
+    ) -> "JobRequirements":
+        """
+        A required skill must not also appear as preferred.
+        """
+
+        required_keys = {
+            _skill_comparison_key(skill)
+            for skill in self.required_skills
+        }
+
+        self.preferred_skills = [
+            skill
+            for skill in self.preferred_skills
+            if _skill_comparison_key(skill)
+            not in required_keys
+        ]
+
+        return self
 
 class ExtractedJobPosting(BaseModel):
     """Structured information extracted from a job posting."""
@@ -272,10 +322,14 @@ class StoredJobResponse(BaseModel):
     title: str
     company: str | None
     location: str | None
+    latitude: float | None
+    longitude: float | None
     description: str | None
     employment_types: list[str]
     required_skills: list[str]
     preferred_skills: list[str]
+    qualifications: list[str]
+    soft_skills: list[str]
     languages: list[str]
     date_posted: str | None
     valid_through: str | None
@@ -311,6 +365,21 @@ class CandidateProfileInput(BaseModel):
     full_name: str = Field(min_length=1)
     headline: str | None = None
     location: str | None = None
+    latitude: float | None = Field(
+        default=None,
+        ge=-90,
+        le=90,
+    )
+    longitude: float | None = Field(
+        default=None,
+        ge=-180,
+        le=180,
+    )
+    max_commute_distance_km: float = Field(
+        default=30,
+        ge=0,
+        le=500,
+    )
     years_of_experience: float | None = Field(
         default=None,
         ge=0,
@@ -400,3 +469,55 @@ class CandidateProfileResponse(
     id: int
     created_at: datetime
     updated_at: datetime
+
+class MatchCategoryBreakdown(BaseModel):
+    """Score details for one matching category."""
+
+    score: float = Field(ge=0)
+    maximum: float = Field(ge=0)
+    available: bool
+
+
+class JobMatchResponse(BaseModel):
+    """Explainable comparison between a job and candidate."""
+
+    job_id: int
+    profile_id: int
+    score: int = Field(ge=0, le=100)
+    recommendation: str
+
+    matching_required_skills: list[str] = Field(
+        default_factory=list,
+    )
+    missing_required_skills: list[str] = Field(
+        default_factory=list,
+    )
+    matching_preferred_skills: list[str] = Field(
+        default_factory=list,
+    )
+    missing_preferred_skills: list[str] = Field(
+        default_factory=list,
+    )
+
+    location_match: bool | None = None
+    location_distance_km: float | None = Field(
+        default=None,
+        ge=0,
+    )
+    maximum_commute_distance_km: float = Field(ge=0)
+    location_match_method: str
+    employment_type_match: bool | None = None
+
+    breakdown: dict[
+        str,
+        MatchCategoryBreakdown,
+    ]
+
+def _skill_comparison_key(
+    value: str,
+) -> str:
+    """Create a basic key for duplicate detection."""
+
+    return " ".join(
+        value.casefold().split()
+    )

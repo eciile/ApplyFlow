@@ -722,6 +722,14 @@ def test_ollama_job_extraction_client() -> None:
                         "Docker",
                         "Airflow"
                         ],
+                        "qualifications": [
+                        "Bachelor's degree",
+                        "3 years of experience"
+                        ],
+                        "soft_skills": [
+                        "Communication",
+                        "Teamwork"
+                        ],
                         "languages": [
                         "French",
                         "English",
@@ -779,7 +787,7 @@ def test_ollama_job_extraction_client() -> None:
     assert job.location == "Paris, France"
     assert job.employment_types == ["FULL_TIME"]
 
-    # ApplyFlow must use the trusted source URL, not the
+    # JobMatch must use the trusted source URL, not the
     # URL returned by the model.
     assert job.application_url == (
         "https://company.example.com/"
@@ -798,6 +806,16 @@ def test_ollama_job_extraction_client() -> None:
     assert job.requirements.preferred_skills == [
         "Docker",
         "Airflow",
+    ]
+
+    assert job.requirements.qualifications == [
+        "Bachelor's degree",
+        "3 years of experience",
+    ]
+
+    assert job.requirements.soft_skills == [
+        "Communication",
+        "Teamwork",
     ]
 
     assert job.requirements.languages == [

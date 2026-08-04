@@ -22,7 +22,7 @@ def utc_now() -> datetime:
 
 
 class Job(Base):
-    """A job posting imported into ApplyFlow."""
+    """A job posting imported into JobMatch."""
 
     __tablename__ = "jobs"
 
@@ -69,6 +69,16 @@ class Job(Base):
         nullable=True,
     )
 
+    latitude: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    longitude: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
     description: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -85,6 +95,16 @@ class Job(Base):
     )
 
     preferred_skills: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+    )
+
+    qualifications: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=list,
+    )
+
+    soft_skills: Mapped[list[str]] = mapped_column(
         JSON,
         default=list,
     )
@@ -131,6 +151,23 @@ class CandidateProfile(Base):
     location: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
+    )
+
+    latitude: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    longitude: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+
+    max_commute_distance_km: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=30,
+        server_default="30",
     )
 
     years_of_experience: Mapped[float | None] = (

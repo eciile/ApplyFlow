@@ -12,7 +12,7 @@ from sqlalchemy.orm import (
 )
 
 
-DEFAULT_DATABASE_URL = "sqlite:///./data/applyflow.db"
+DEFAULT_DATABASE_URL = "sqlite:///./data/jobmatch.db"
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     DEFAULT_DATABASE_URL,
