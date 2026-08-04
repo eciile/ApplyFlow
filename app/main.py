@@ -7,6 +7,8 @@ from fastapi import (
     Request,
 )
 from app.schemas import (
+    ApplicationEventInput,
+    ApplicationListItemResponse,
     JobPageFetchResponse,
     JobUrlRequest,
     JobUrlValidationResponse,
@@ -16,6 +18,11 @@ from app.schemas import (
     CandidateProfileResponse,
     CandidateProfileInput,
     JobMatchResponse,
+    ApplicationEventResponse,
+    ApplicationEventType,
+    ApplicationStatus,
+    JobApplicationInput,
+    JobApplicationResponse,
 )
 from app.services.job_page_fetcher import (
     FetchedJobPage,
@@ -33,12 +40,17 @@ from app.services.jsonld_extractor import (
     extract_job_posting_jsonld,
 )
 from app.services.url_security import UnsafeUrlError
-from sqlalchemy import select
+from sqlalchemy import select # type: ignore
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_session
-from app.models import Job, CandidateProfile
+from app.models import (
+    ApplicationEvent,
+    CandidateProfile,
+    Job,
+    JobApplication,
+)
 from app.services.job_sources import (
     JobExtractionResult,
     JobSourceError,
@@ -55,6 +67,10 @@ from app.services.llm_job_extractor import (
 )
 from app.services.job_matcher import calculate_job_match
 from app.services.geocoding import geocode_location
+from app.services.application_tracking import (
+    assess_possible_ghosting,
+)
+from datetime import datetime, timezone
 
 app = FastAPI(
     title="JobMatch API",
@@ -660,3 +676,365 @@ def match_job_to_candidate(
         ),
         breakdown=result.breakdown,
     )
+
+
+@app.put(
+    "/jobs/{job_id}/application",
+    response_model=JobApplicationResponse,
+)
+def put_job_application(
+    job_id: int,
+    application_input: JobApplicationInput,
+    db: Session = Depends(get_session),
+) -> JobApplicationResponse:
+    """Create or update tracking for a saved job."""
+
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    application = db.scalar(
+        select(JobApplication).where(
+            JobApplication.job_id == job_id
+        )
+    )
+
+    now = datetime.now(timezone.utc)
+    new_status = application_input.status
+
+    if application is None:
+        application = JobApplication(
+            job_id=job_id,
+            status=new_status.value,
+            applied_at=application_input.applied_at,
+            follow_up_at=application_input.follow_up_at,
+            next_action=application_input.next_action,
+            notes=application_input.notes,
+            last_activity_at=now,
+        )
+
+        db.add(application)
+        db.flush()
+
+        event = ApplicationEvent(
+            application_id=application.id,
+            event_type=_event_type_for_status(
+                new_status
+            ).value,
+            occurred_at=now,
+            notes=(
+                f"Application tracking created with "
+                f"status '{new_status.value}'."
+            ),
+        )
+
+        db.add(event)
+
+    else:
+        previous_status = ApplicationStatus(
+            application.status
+        )
+
+        application.status = new_status.value
+        application.applied_at = (
+            application_input.applied_at
+        )
+        application.follow_up_at = (
+            application_input.follow_up_at
+        )
+        application.next_action = (
+            application_input.next_action
+        )
+        application.notes = application_input.notes
+        application.last_activity_at = now
+
+        if previous_status != new_status:
+            event = ApplicationEvent(
+                application_id=application.id,
+                event_type=_event_type_for_status(
+                    new_status
+                ).value,
+                occurred_at=now,
+                notes=(
+                    f"Status changed from "
+                    f"'{previous_status.value}' to "
+                    f"'{new_status.value}'."
+                ),
+            )
+
+            db.add(event)
+
+    db.commit()
+    db.refresh(application)
+
+    return _build_application_response(
+        application
+    )
+
+def _event_type_for_status(
+    status_value: ApplicationStatus,
+) -> ApplicationEventType:
+    """Choose the event type associated with a status."""
+
+    event_types = {
+        ApplicationStatus.APPLIED: (
+            ApplicationEventType.APPLIED
+        ),
+        ApplicationStatus.INTERVIEW: (
+            ApplicationEventType.INTERVIEW
+        ),
+        ApplicationStatus.OFFER: (
+            ApplicationEventType.OFFER
+        ),
+        ApplicationStatus.REJECTED: (
+            ApplicationEventType.REJECTION
+        ),
+    }
+
+    return event_types.get(
+        status_value,
+        ApplicationEventType.STATUS_CHANGED,
+    )
+
+
+def _last_event_time(
+    application: JobApplication,
+    event_type: ApplicationEventType,
+) -> datetime | None:
+    """Return the latest occurrence of one application event type."""
+
+    matching_times = [
+        event.occurred_at
+        for event in application.events
+        if event.event_type == event_type.value
+    ]
+
+    if not matching_times:
+        return None
+
+    def utc_comparison_time(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+
+        return value.astimezone(timezone.utc)
+
+    return max(
+        matching_times,
+        key=utc_comparison_time,
+    )
+
+def _build_application_response(
+    application: JobApplication,
+) -> JobApplicationResponse:
+    assessment = assess_possible_ghosting(
+        status=application.status,
+        applied_at=application.applied_at,
+        last_employer_response_at=(
+            application.last_employer_response_at
+        ),
+    )
+
+    return JobApplicationResponse(
+        id=application.id,
+        job_id=application.job_id,
+        status=application.status,
+        applied_at=application.applied_at,
+        follow_up_at=application.follow_up_at,
+        last_follow_up_sent_at=_last_event_time(
+            application,
+            ApplicationEventType.FOLLOW_UP_SENT,
+        ),
+        last_activity_at=application.last_activity_at,
+        last_employer_response_at=(
+            application.last_employer_response_at
+        ),
+        next_action=application.next_action,
+        notes=application.notes,
+        days_without_response=(
+            assessment.days_without_response
+        ),
+        possibly_ghosted=(
+            assessment.possibly_ghosted
+        ),
+        ghosting_threshold_days=(
+            assessment.ghosting_threshold_days
+        ),
+        events=[
+            ApplicationEventResponse.model_validate(
+                event
+            )
+            for event in application.events
+        ],
+        created_at=application.created_at,
+        updated_at=application.updated_at,
+    )
+def _build_application_list_item(
+    application: JobApplication,
+    job: Job,
+) -> ApplicationListItemResponse:
+    """Build a compact application-list response."""
+
+    assessment = assess_possible_ghosting(
+        status=application.status,
+        applied_at=application.applied_at,
+        last_employer_response_at=(
+            application.last_employer_response_at
+        ),
+    )
+
+    return ApplicationListItemResponse(
+        application_id=application.id,
+        job_id=job.id,
+        job_title=job.title,
+        company=job.company,
+        status=application.status,
+        applied_at=application.applied_at,
+        follow_up_at=application.follow_up_at,
+        last_follow_up_sent_at=_last_event_time(
+            application,
+            ApplicationEventType.FOLLOW_UP_SENT,
+        ),
+        last_activity_at=application.last_activity_at,
+        last_employer_response_at=(
+            application.last_employer_response_at
+        ),
+        next_action=application.next_action,
+        days_without_response=(
+            assessment.days_without_response
+        ),
+        possibly_ghosted=(
+            assessment.possibly_ghosted
+        ),
+        ghosting_threshold_days=(
+            assessment.ghosting_threshold_days
+        ),
+    )
+
+@app.get(
+    "/jobs/{job_id}/application",
+    response_model=JobApplicationResponse,
+)
+def get_job_application(
+    job_id: int,
+    db: Session = Depends(get_session),
+) -> JobApplicationResponse:
+    """Return tracking information for a saved job."""
+
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    application = db.scalar(
+        select(JobApplication).where(
+            JobApplication.job_id == job_id
+        )
+    )
+
+    if application is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job application not found.",
+        )
+
+    return _build_application_response(application)
+
+
+@app.post(
+    "/jobs/{job_id}/application/events",
+    response_model=JobApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_application_event(
+    job_id: int,
+    event_input: ApplicationEventInput,
+    db: Session = Depends(get_session),
+) -> JobApplicationResponse:
+    """Record an event in an application's history."""
+
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    application = db.scalar(
+        select(JobApplication).where(
+            JobApplication.job_id == job_id
+        )
+    )
+
+    if application is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job application not found.",
+        )
+
+    occurred_at = (
+        event_input.occurred_at
+        or datetime.now(timezone.utc)
+    )
+
+    event = ApplicationEvent(
+        application_id=application.id,
+        event_type=event_input.event_type.value,
+        occurred_at=occurred_at,
+        notes=event_input.notes,
+    )
+
+    db.add(event)
+
+    application.last_activity_at = occurred_at
+
+    if (
+        event_input.event_type
+        == ApplicationEventType.EMPLOYER_RESPONSE
+    ):
+        application.last_employer_response_at = (
+            occurred_at
+        )
+
+    db.commit()
+    db.refresh(application)
+
+    return _build_application_response(application)
+
+@app.get(
+    "/applications",
+    response_model=list[ApplicationListItemResponse],
+)
+def list_job_applications(
+    db: Session = Depends(get_session),
+) -> list[ApplicationListItemResponse]:
+    """Return all tracked job applications."""
+
+    rows = db.execute(
+        select(
+            JobApplication,
+            Job,
+        )
+        .join(
+            Job,
+            Job.id == JobApplication.job_id,
+        )
+        .order_by(
+            JobApplication.updated_at.desc(),
+        )
+    ).all()
+
+    return [
+        _build_application_list_item(
+            application,
+            job,
+        )
+        for application, job in rows
+    ]
