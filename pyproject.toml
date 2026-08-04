@@ -1,5 +1,5 @@
 [project]
-name = "applyflow"
+name = "jobmatch"
 version = "0.1.0"
 description = "A personal job-search assistant for importing and evaluating job postings."
 requires-python = ">=3.11"
