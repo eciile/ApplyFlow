@@ -184,7 +184,7 @@ async def fetch_greenhouse_job(
             trust_env=False,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "ApplyFlow/0.3",
+                "User-Agent": "JobMatch/0.3",
             },
         )
 
@@ -334,7 +334,7 @@ async def fetch_lever_job(
             trust_env=False,
             headers={
                 "Accept": "application/json",
-                "User-Agent": "ApplyFlow/0.3",
+                "User-Agent": "JobMatch/0.3",
             },
         )
 

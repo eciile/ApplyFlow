@@ -15,7 +15,7 @@ config.set_main_option(
     "sqlalchemy.url",
     os.getenv(
         "DATABASE_URL",
-        "sqlite:///./data/applyflow.db",
+        "sqlite:///./data/jobmatch.db",
     ),
 )
 # Interpret the config file for Python logging.

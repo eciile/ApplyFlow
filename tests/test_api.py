@@ -224,6 +224,29 @@ def test_extract_job_posting_jsonld(
         fake_fetch_job_page,
     )
 
+    class FakeLlmClient:
+        async def extract_requirements(
+            self,
+            *,
+            title: str,
+            description: str,
+        ) -> JobRequirements:
+            assert title == "Junior Data Engineer"
+            assert description == "Build reliable pipelines."
+            return JobRequirements(
+                required_skills=["Python", "SQL"],
+                preferred_skills=["Docker"],
+                qualifications=["Bachelor's degree"],
+                soft_skills=["Communication"],
+                languages=["English"],
+            )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_llm_job_extraction_client",
+        lambda: FakeLlmClient(),
+    )
+
     response = client.post(
         "/jobs/extract",
         json={
@@ -254,6 +277,13 @@ def test_extract_job_posting_jsonld(
     ]
     assert job["date_posted"] == "2026-07-20"
     assert job["valid_through"] == "2026-08-20"
+    assert job["requirements"] == {
+        "required_skills": ["Python", "SQL"],
+        "preferred_skills": ["Docker"],
+        "qualifications": ["Bachelor's degree"],
+        "soft_skills": ["Communication"],
+        "languages": ["English"],
+    }
 
 
 def test_extract_returns_422_without_usable_content(
@@ -365,6 +395,29 @@ def test_import_job_is_saved_without_duplicates(
         fake_fetch_job_page,
     )
 
+    class FakeLlmClient:
+        async def extract_requirements(
+            self,
+            *,
+            title: str,
+            description: str,
+        ) -> JobRequirements:
+            assert title == "Junior Data Engineer"
+            assert description == "Build data pipelines."
+            return JobRequirements(
+                required_skills=["Python", "SQL"],
+                preferred_skills=["Docker"],
+                qualifications=["Bachelor's degree"],
+                soft_skills=["Communication"],
+                languages=["English"],
+            )
+
+    monkeypatch.setattr(
+        main_module,
+        "get_llm_job_extraction_client",
+        lambda: FakeLlmClient(),
+    )
+
     request_body = {
         "url": "https://jobs.example.com/jobs/123"
     }
@@ -405,9 +458,11 @@ def test_import_job_is_saved_without_duplicates(
 
     jobs = list_response.json()
 
-    assert jobs[0]["required_skills"] == []
-    assert jobs[0]["preferred_skills"] == []
-    assert jobs[0]["languages"] == []
+    assert jobs[0]["required_skills"] == ["Python", "SQL"]
+    assert jobs[0]["preferred_skills"] == ["Docker"]
+    assert jobs[0]["qualifications"] == ["Bachelor's degree"]
+    assert jobs[0]["soft_skills"] == ["Communication"]
+    assert jobs[0]["languages"] == ["English"]
 def test_extract_endpoint_uses_greenhouse_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -534,6 +589,20 @@ def test_extract_uses_llm_for_generic_html(
                 application_url=content.source_url,
             )
 
+        async def extract_requirements(
+            self,
+            *,
+            title: str,
+            description: str,
+        ) -> JobRequirements:
+            assert title == "Junior Data Engineer"
+            assert description == (
+                "Develop and maintain reliable data pipelines."
+            )
+            return JobRequirements(
+                required_skills=["Python", "SQL", "REST API"],
+            )
+
     monkeypatch.setattr(
         main_module,
         "fetch_job_page",
@@ -565,6 +634,11 @@ def test_extract_uses_llm_for_generic_html(
     assert data["job"]["title"] == "Junior Data Engineer"
     assert data["job"]["company"] == "Example Company"
     assert data["job"]["location"] == "Paris, France"
+    assert data["job"]["requirements"]["required_skills"] == [
+        "Python",
+        "SQL",
+        "REST API",
+    ]
 
 def test_import_persists_llm_extracted_job(
     monkeypatch: pytest.MonkeyPatch,
@@ -631,6 +705,12 @@ def test_import_persists_llm_extracted_job(
                         "Docker",
                         "AWS",
                     ],
+                    qualifications=[
+                        "Bachelor's degree",
+                    ],
+                    soft_skills=[
+                        "Teamwork",
+                    ],
                     languages=[
                         "French",
                         "English",
@@ -692,6 +772,10 @@ def test_import_persists_llm_extracted_job(
         "Docker",
         "AWS",
     ]
+    assert data["job"]["qualifications"] == [
+        "Bachelor's degree",
+    ]
+    assert data["job"]["soft_skills"] == ["Teamwork"]
     assert data["job"]["languages"] == [
         "French",
         "English",
@@ -806,3 +890,98 @@ def test_put_candidate_profile_creates_and_updates_single_profile(
     assert get_response.status_code == 200
     assert get_response.json()["id"] == created_profile["id"]
     assert get_response.json()["full_name"] == "Updated Candidate"
+
+
+def test_match_geocodes_and_caches_missing_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = "https://example.com/jobs/rennes-engineer"
+
+    async def fake_retrieve_job_page(
+        source_url: str,
+    ) -> FetchedJobPage:
+        return _fake_page(
+            url=source_url,
+            html="<html><body>job</body></html>",
+        )
+
+    async def fake_extract_structured_job(
+        source_url: str,
+    ) -> JobExtractionResult:
+        return JobExtractionResult(
+            job=ExtractedJobPosting(
+                title="Software Engineer",
+                company="Example",
+                location="Rennes, France",
+                description="Build software in Rennes.",
+                employment_types=["PERMANENT"],
+                requirements=JobRequirements(
+                    qualifications=["Master's degree"],
+                    soft_skills=["Leadership"],
+                ),
+                application_url=source_url,
+            ),
+            extraction_method="json_ld",
+            final_url=source_url,
+            content_sha256="c" * 64,
+        )
+
+    geocoding_calls: list[str] = []
+
+    def fake_geocode_location(
+        location: str,
+    ) -> tuple[float, float]:
+        geocoding_calls.append(location)
+        coordinates = {
+            "Cesson-Sévigné, France": (48.1212, -1.6030),
+            "Rennes, France": (48.1109, -1.6837),
+        }
+        return coordinates[location]
+
+    monkeypatch.setattr(
+        main_module,
+        "_retrieve_job_page",
+        fake_retrieve_job_page,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_extract_structured_job",
+        fake_extract_structured_job,
+    )
+    monkeypatch.setattr(
+        main_module,
+        "geocode_location",
+        fake_geocode_location,
+    )
+
+    profile_response = client.put(
+        "/profile",
+        json={
+            "full_name": "Test Candidate",
+            "location": "Cesson-Sévigné, France",
+            "preferred_employment_types": ["PERMANENT"],
+        },
+    )
+    import_response = client.post(
+        "/jobs/import",
+        json={"url": url},
+    )
+
+    assert profile_response.status_code == 200
+    assert import_response.status_code == 201
+
+    first_match = client.post("/jobs/1/match")
+    second_match = client.post("/jobs/1/match")
+
+    assert first_match.status_code == 200
+    result = first_match.json()
+    assert result["score"] == 100
+    assert result["location_match"] is True
+    assert result["location_distance_km"] is not None
+    assert result["location_distance_km"] < 10
+    assert result["location_match_method"] == "distance"
+    assert second_match.status_code == 200
+    assert geocoding_calls == [
+        "Cesson-Sévigné, France",
+        "Rennes, France",
+    ]

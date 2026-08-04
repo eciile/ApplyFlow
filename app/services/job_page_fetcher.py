@@ -27,7 +27,7 @@ REDIRECT_STATUS_CODES = {
 
 REQUEST_HEADERS = {
     "User-Agent": (
-        "ApplyFlow/0.1 "
+        "JobMatch/0.1 "
         "(personal job-search assistant; contact: local-development)"
     ),
     "Accept": "text/html,application/xhtml+xml",

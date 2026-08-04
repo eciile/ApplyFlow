@@ -15,6 +15,7 @@ from app.schemas import (
     StoredJobResponse,
     CandidateProfileResponse,
     CandidateProfileInput,
+    JobMatchResponse,
 )
 from app.services.job_page_fetcher import (
     FetchedJobPage,
@@ -52,9 +53,11 @@ from app.services.llm_job_extractor import (
     LlmJobExtractionError,
     get_llm_job_extraction_client,
 )
+from app.services.job_matcher import calculate_job_match
+from app.services.geocoding import geocode_location
 
 app = FastAPI(
-    title="ApplyFlow API",
+    title="JobMatch API",
     description=(
         "A personal job-search assistant that imports job postings "
         "from URLs and evaluates their relevance and risk."
@@ -171,8 +174,52 @@ async def _extract_structured_job(
     url: str,
 ) -> JobExtractionResult:
     """
-    Extract a job through an ATS adapter or JSON-LD fallback.
+    Extract a job, then enrich any missing requirements.
     """
+
+    result = await _extract_basic_structured_job(url)
+
+    requirements = result.job.requirements
+    requirements_are_empty = not any(
+        (
+            requirements.required_skills,
+            requirements.preferred_skills,
+            requirements.qualifications,
+            requirements.soft_skills,
+            requirements.languages,
+        )
+    )
+
+    if not requirements_are_empty or not result.job.description:
+        return result
+
+    try:
+        enriched_requirements = await (
+            get_llm_job_extraction_client().extract_requirements(
+                title=result.job.title,
+                description=result.job.description,
+            )
+        )
+    except LlmJobExtractionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return JobExtractionResult(
+        job=result.job.model_copy(
+            update={"requirements": enriched_requirements}
+        ),
+        extraction_method=result.extraction_method,
+        final_url=result.final_url,
+        content_sha256=result.content_sha256,
+    )
+
+
+async def _extract_basic_structured_job(
+    url: str,
+) -> JobExtractionResult:
+    """Extract a job through ATS, JSON-LD, or generic HTML."""
 
     try:
         ats_result = await extract_ats_job(url)
@@ -353,6 +400,10 @@ async def import_job(
         preferred_skills=(
             extracted_job.requirements.preferred_skills
         ),
+        qualifications=(
+            extracted_job.requirements.qualifications
+        ),
+        soft_skills=extracted_job.requirements.soft_skills,
         languages=extracted_job.requirements.languages,
         date_posted=extracted_job.date_posted,
         valid_through=extracted_job.valid_through,
@@ -471,3 +522,141 @@ def put_candidate_profile(
     db.refresh(profile)
 
     return profile
+
+@app.post(
+    "/jobs/{job_id}/match",
+    response_model=JobMatchResponse,
+)
+def match_job_to_candidate(
+    job_id: int,
+    db: Session = Depends(get_session),
+) -> JobMatchResponse:
+    """Compare a stored job with the candidate profile."""
+
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    profile = db.scalar(
+        select(CandidateProfile).order_by(
+            CandidateProfile.id.asc()
+        )
+    )
+
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Candidate profile not found.",
+        )
+
+    coordinates_updated = False
+
+    if (
+        profile.location
+        and (
+            profile.latitude is None
+            or profile.longitude is None
+        )
+    ):
+        coordinates = geocode_location(profile.location)
+        if coordinates is not None:
+            profile.latitude, profile.longitude = coordinates
+            coordinates_updated = True
+
+    if (
+        job.location
+        and (
+            job.latitude is None
+            or job.longitude is None
+        )
+    ):
+        coordinates = geocode_location(job.location)
+        if coordinates is not None:
+            job.latitude, job.longitude = coordinates
+            coordinates_updated = True
+
+    if coordinates_updated:
+        db.commit()
+
+    profile_coordinates = (
+        (
+            profile.latitude,
+            profile.longitude,
+        )
+        if (
+            profile.latitude is not None
+            and profile.longitude is not None
+        )
+        else None
+    )
+
+    job_coordinates = (
+        (
+            job.latitude,
+            job.longitude,
+        )
+        if (
+            job.latitude is not None
+            and job.longitude is not None
+        )
+        else None
+    )
+
+    result = calculate_job_match(
+        candidate_skills=profile.skills,
+        required_skills=job.required_skills,
+        preferred_skills=job.preferred_skills,
+        profile_location=profile.location,
+        profile_coordinates=profile_coordinates,
+        preferred_locations=(
+            profile.preferred_locations
+        ),
+        maximum_commute_distance_km=(
+            profile.max_commute_distance_km
+        ),
+        job_location=job.location,
+        job_coordinates=job_coordinates,
+        job_employment_types=(
+            job.employment_types
+        ),
+        preferred_employment_types=(
+            profile.preferred_employment_types
+        ),
+    )
+
+    return JobMatchResponse(
+        job_id=job.id,
+        profile_id=profile.id,
+        score=result.score,
+        recommendation=result.recommendation,
+        matching_required_skills=(
+            result.matching_required_skills
+        ),
+        missing_required_skills=(
+            result.missing_required_skills
+        ),
+        matching_preferred_skills=(
+            result.matching_preferred_skills
+        ),
+        missing_preferred_skills=(
+            result.missing_preferred_skills
+        ),
+        location_match=result.location_match,
+        location_distance_km=(
+            result.location_distance_km
+        ),
+        maximum_commute_distance_km=(
+            result.maximum_commute_distance_km
+        ),
+        location_match_method=(
+            result.location_match_method
+        ),
+        employment_type_match=(
+            result.employment_type_match
+        ),
+        breakdown=result.breakdown,
+    )
