@@ -149,3 +149,63 @@ export async function calculateJobMatch(
 
   return response.json() as Promise<JobMatchResult>;
 }
+
+export type CandidateLanguage = {
+  name: string;
+  level: string | null;
+};
+
+export type CandidateProfile = {
+  id?: number;
+  full_name: string | null;
+  headline: string | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  max_commute_distance_km: number;
+  years_of_experience: number | null;
+  skills: string[];
+  languages: CandidateLanguage[];
+  preferred_locations: string[];
+  preferred_employment_types: string[];
+};
+
+export async function getProfile(
+  signal?: AbortSignal,
+): Promise<CandidateProfile | null> {
+  const response = await fetch(`${API_BASE_URL}/profile`, {
+    headers: {
+      Accept: "application/json",
+    },
+    signal,
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<CandidateProfile>;
+}
+
+export async function saveProfile(
+  profile: CandidateProfile,
+): Promise<CandidateProfile> {
+  const response = await fetch(`${API_BASE_URL}/profile`, {
+    method: "PUT",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(profile),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<CandidateProfile>;
+}
