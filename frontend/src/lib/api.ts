@@ -7,11 +7,52 @@ export type HealthResponse = {
   status: string;
 };
 
+export type Job = {
+  id: number;
+  source_url: string;
+  final_url: string;
+  application_url: string;
+  content_sha256: string;
+  title: string;
+  company: string | null;
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  description: string | null;
+  employment_types: string[];
+  required_skills: string[];
+  preferred_skills: string[];
+  qualifications: string[];
+  soft_skills: string[];
+  languages: string[];
+  date_posted: string | null;
+  valid_through: string | null;
+  created_at: string;
+  extraction_method: string;
+};
+
+export type JobImportResponse = {
+  created: boolean;
+  job: Job;
+};
+
+type ApiErrorBody = {
+  detail?: string;
+};
+
+async function getErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as ApiErrorBody;
+    return body.detail ?? `Request failed with status ${response.status}`;
+  } catch {
+    return `Request failed with status ${response.status}`;
+  }
+}
+
 export async function getHealth(
   signal?: AbortSignal,
 ): Promise<HealthResponse> {
   const response = await fetch(`${API_BASE_URL}/health`, {
-    method: "GET",
     headers: {
       Accept: "application/json",
     },
@@ -19,8 +60,40 @@ export async function getHealth(
   });
 
   if (!response.ok) {
-    throw new Error(`Health request failed with status ${response.status}`);
+    throw new Error(await getErrorMessage(response));
   }
 
   return response.json() as Promise<HealthResponse>;
+}
+
+export async function getJobs(signal?: AbortSignal): Promise<Job[]> {
+  const response = await fetch(`${API_BASE_URL}/jobs`, {
+    headers: {
+      Accept: "application/json",
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<Job[]>;
+}
+
+export async function importJob(url: string): Promise<JobImportResponse> {
+  const response = await fetch(`${API_BASE_URL}/jobs/import`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ url }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<JobImportResponse>;
 }
