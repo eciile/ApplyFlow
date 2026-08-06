@@ -42,10 +42,8 @@ class JobUrlRequest(BaseModel):
 
         normalized_host = host.lower().rstrip(".")
 
-        if (
-            normalized_host in BLOCKED_HOSTNAMES
-            or normalized_host.endswith(".localhost")
-            or normalized_host.endswith(".local")
+        if normalized_host in BLOCKED_HOSTNAMES or normalized_host.endswith(
+            (".localhost", ".local")
         ):
             raise ValueError("Local URLs are not allowed.")
 

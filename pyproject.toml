@@ -7,3 +7,11 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI intentionally declares dependencies as function-call defaults.
+"app/main.py" = ["B008"]
+# Pydantic validators use ValueError to report validation failures.
+"app/schemas.py" = ["TRY004"]
+# The service accepts an injectable date and otherwise uses the local date.
+"app/services/application_tracking.py" = ["DTZ011"]

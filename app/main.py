@@ -384,7 +384,7 @@ async def import_job(
             job=StoredJobResponse.model_validate(existing_job),
         )
 
-    page = await _retrieve_job_page(source_url)
+    await _retrieve_job_page(source_url)
 
     try:
         result = await _extract_structured_job(source_url)
