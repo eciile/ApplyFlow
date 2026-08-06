@@ -7,7 +7,6 @@ from typing import Any
 
 import httpx
 
-
 GEOCODING_URL = "https://data.geopf.fr/geocodage/search"
 GEOCODING_TIMEOUT_SECONDS = 5.0
 logger = logging.getLogger(__name__)
@@ -47,9 +46,7 @@ def geocode_location(
         return None
 
     try:
-        longitude, latitude = payload["features"][0][
-            "geometry"
-        ]["coordinates"]
+        longitude, latitude = payload["features"][0]["geometry"]["coordinates"]
         latitude = float(latitude)
         longitude = float(longitude)
     except (KeyError, IndexError, TypeError, ValueError):

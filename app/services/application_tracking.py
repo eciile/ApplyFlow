@@ -5,7 +5,6 @@ from datetime import date, datetime
 
 from app.schemas import ApplicationStatus
 
-
 GHOSTING_THRESHOLD_DAYS = 21
 
 ACTIVE_RESPONSE_STATUSES = {
@@ -65,8 +64,7 @@ def assess_possible_ghosting(
     )
 
     possibly_ghosted = (
-        normalized_status in ACTIVE_RESPONSE_STATUSES
-        and elapsed_days >= threshold_days
+        normalized_status in ACTIVE_RESPONSE_STATUSES and elapsed_days >= threshold_days
     )
 
     return GhostingAssessment(

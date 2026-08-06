@@ -1,6 +1,5 @@
 import re
 
-
 # ASCII escapes keep this source file independent of terminal encoding.
 MOJIBAKE_MARKERS = (
     "\u00c3",  # UTF-8 accents decoded as Windows-1252 (for example, Ã©)

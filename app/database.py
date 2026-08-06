@@ -11,7 +11,6 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-
 DEFAULT_DATABASE_URL = "sqlite:///./data/jobmatch.db"
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

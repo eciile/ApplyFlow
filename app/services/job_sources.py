@@ -1,12 +1,15 @@
-from enum import StrEnum
-from urllib.parse import urlsplit, quote
 from dataclasses import dataclass
+from enum import StrEnum
+from hashlib import sha256
 from html import unescape
 from typing import Any
+from urllib.parse import quote, urlsplit
+
 import httpx2
 from bs4 import BeautifulSoup
+
 from app.schemas import ExtractedJobPosting
-from hashlib import sha256
+
 
 class JobSource(StrEnum):
     """Supported job-posting sources."""
@@ -26,12 +29,14 @@ LEVER_HOSTS = {
     "jobs.eu.lever.co",
 }
 
+
 @dataclass(frozen=True, slots=True)
 class GreenhouseReference:
     """Values identifying a Greenhouse job posting."""
 
     board_token: str
     job_id: str
+
 
 @dataclass(frozen=True, slots=True)
 class LeverReference:
@@ -40,6 +45,7 @@ class LeverReference:
     site: str
     posting_id: str
     api_host: str
+
 
 @dataclass(frozen=True, slots=True)
 class JobExtractionResult:
@@ -50,12 +56,14 @@ class JobExtractionResult:
     final_url: str
     content_sha256: str
 
+
 class JobSourceError(Exception):
     """Raised when a job source cannot return usable data."""
 
 
 class JobSourceNotFoundError(JobSourceError):
     """Raised when a job posting no longer exists."""
+
 
 def detect_job_source(url: str) -> JobSource:
     """Identify the platform hosting a job posting."""
@@ -70,6 +78,7 @@ def detect_job_source(url: str) -> JobSource:
         return JobSource.LEVER
 
     return JobSource.GENERIC
+
 
 def parse_greenhouse_url(
     url: str,
@@ -86,11 +95,7 @@ def parse_greenhouse_url(
 
     parsed_url = urlsplit(url)
 
-    path_parts = [
-        part
-        for part in parsed_url.path.split("/")
-        if part
-    ]
+    path_parts = [part for part in parsed_url.path.split("/") if part]
 
     if len(path_parts) < 3:
         return None
@@ -111,6 +116,7 @@ def parse_greenhouse_url(
         job_id=job_id,
     )
 
+
 def parse_lever_url(
     url: str,
 ) -> LeverReference | None:
@@ -128,11 +134,7 @@ def parse_lever_url(
     parsed_url = urlsplit(url)
     hostname = (parsed_url.hostname or "").lower()
 
-    path_parts = [
-        part
-        for part in parsed_url.path.split("/")
-        if part
-    ]
+    path_parts = [part for part in parsed_url.path.split("/") if part]
 
     if len(path_parts) < 2:
         return None
@@ -142,17 +144,14 @@ def parse_lever_url(
     if not site or not posting_id:
         return None
 
-    api_host = (
-        "api.eu.lever.co"
-        if hostname == "jobs.eu.lever.co"
-        else "api.lever.co"
-    )
+    api_host = "api.eu.lever.co" if hostname == "jobs.eu.lever.co" else "api.lever.co"
 
     return LeverReference(
         site=site,
         posting_id=posting_id,
         api_host=api_host,
     )
+
 
 async def fetch_greenhouse_job(
     reference: GreenhouseReference,
@@ -170,10 +169,7 @@ async def fetch_greenhouse_job(
         safe="",
     )
 
-    api_url = (
-        "https://boards-api.greenhouse.io/v1/boards/"
-        f"{board_token}/jobs/{job_id}"
-    )
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}"
 
     owns_client = client is None
 
@@ -193,8 +189,7 @@ async def fetch_greenhouse_job(
 
         if response.status_code == 404:
             raise JobSourceNotFoundError(
-                "The Greenhouse job was not found "
-                "or is no longer published."
+                "The Greenhouse job was not found or is no longer published."
             )
 
         response.raise_for_status()
@@ -204,74 +199,50 @@ async def fetch_greenhouse_job(
         raise
 
     except httpx2.TimeoutException as exc:
-        raise JobSourceError(
-            "Greenhouse took too long to respond."
-        ) from exc
+        raise JobSourceError("Greenhouse took too long to respond.") from exc
 
     except httpx2.HTTPStatusError as exc:
         raise JobSourceError(
-            "Greenhouse returned HTTP status "
-            f"{exc.response.status_code}."
+            f"Greenhouse returned HTTP status {exc.response.status_code}."
         ) from exc
 
     except httpx2.RequestError as exc:
-        raise JobSourceError(
-            "Greenhouse could not be reached."
-        ) from exc
+        raise JobSourceError("Greenhouse could not be reached.") from exc
 
     except ValueError as exc:
-        raise JobSourceError(
-            "Greenhouse returned invalid JSON."
-        ) from exc
+        raise JobSourceError("Greenhouse returned invalid JSON.") from exc
 
     finally:
         if owns_client:
             await client.aclose()
 
     if not isinstance(payload, dict):
-        raise JobSourceError(
-            "Greenhouse returned an unexpected response."
-        )
+        raise JobSourceError("Greenhouse returned an unexpected response.")
 
     title = _clean_text(payload.get("title"))
 
     if not title:
-        raise JobSourceError(
-            "The Greenhouse response did not "
-            "contain a job title."
-        )
+        raise JobSourceError("The Greenhouse response did not contain a job title.")
 
     location_data = payload.get("location")
     location: str | None = None
 
     if isinstance(location_data, dict):
-        location = _clean_text(
-            location_data.get("name")
-        )
+        location = _clean_text(location_data.get("name"))
 
-    application_url = (
-        _clean_text(payload.get("absolute_url"))
-        or source_url
-    )
+    application_url = _clean_text(payload.get("absolute_url")) or source_url
 
     return ExtractedJobPosting(
         title=title,
-        company=_clean_text(
-            payload.get("company_name")
-        ),
+        company=_clean_text(payload.get("company_name")),
         location=location,
-        description=_clean_html(
-            payload.get("content")
-        ),
+        description=_clean_html(payload.get("content")),
         employment_types=[],
-        date_posted=_clean_text(
-            payload.get("first_published")
-        ),
-        valid_through=_clean_text(
-            payload.get("application_deadline")
-        ),
+        date_posted=_clean_text(payload.get("first_published")),
+        valid_through=_clean_text(payload.get("application_deadline")),
         application_url=application_url,
     )
+
 
 def _clean_text(value: Any) -> str | None:
     """Return a normalized string value."""
@@ -304,6 +275,7 @@ def _clean_html(value: Any) -> str | None:
 
     return normalized or None
 
+
 async def fetch_lever_job(
     reference: LeverReference,
     source_url: str,
@@ -320,10 +292,7 @@ async def fetch_lever_job(
         safe="",
     )
 
-    api_url = (
-        f"https://{reference.api_host}/v0/postings/"
-        f"{site}/{posting_id}"
-    )
+    api_url = f"https://{reference.api_host}/v0/postings/{site}/{posting_id}"
 
     owns_client = client is None
 
@@ -343,8 +312,7 @@ async def fetch_lever_job(
 
         if response.status_code == 404:
             raise JobSourceNotFoundError(
-                "The Lever job was not found "
-                "or is no longer published."
+                "The Lever job was not found or is no longer published."
             )
 
         response.raise_for_status()
@@ -354,55 +322,39 @@ async def fetch_lever_job(
         raise
 
     except httpx2.TimeoutException as exc:
-        raise JobSourceError(
-            "Lever took too long to respond."
-        ) from exc
+        raise JobSourceError("Lever took too long to respond.") from exc
 
     except httpx2.HTTPStatusError as exc:
         raise JobSourceError(
-            "Lever returned HTTP status "
-            f"{exc.response.status_code}."
+            f"Lever returned HTTP status {exc.response.status_code}."
         ) from exc
 
     except httpx2.RequestError as exc:
-        raise JobSourceError(
-            "Lever could not be reached."
-        ) from exc
+        raise JobSourceError("Lever could not be reached.") from exc
 
     except ValueError as exc:
-        raise JobSourceError(
-            "Lever returned invalid JSON."
-        ) from exc
+        raise JobSourceError("Lever returned invalid JSON.") from exc
 
     finally:
         if owns_client:
             await client.aclose()
 
     if not isinstance(payload, dict):
-        raise JobSourceError(
-            "Lever returned an unexpected response."
-        )
+        raise JobSourceError("Lever returned an unexpected response.")
 
     title = _clean_text(payload.get("text"))
 
     if not title:
-        raise JobSourceError(
-            "The Lever response did not "
-            "contain a job title."
-        )
+        raise JobSourceError("The Lever response did not contain a job title.")
 
     categories = payload.get("categories")
 
     if not isinstance(categories, dict):
         categories = {}
 
-    location = _clean_text(
-        categories.get("location")
-    )
+    location = _clean_text(categories.get("location"))
 
-    country = _clean_text(
-        payload.get("country")
-    )
+    country = _clean_text(payload.get("country"))
 
     if location and country:
         if country.lower() not in location.lower():
@@ -410,30 +362,17 @@ async def fetch_lever_job(
     elif country:
         location = country
 
-    commitment = _clean_text(
-        categories.get("commitment")
+    commitment = _clean_text(categories.get("commitment"))
+
+    employment_types = [commitment] if commitment else []
+
+    description = _clean_text(payload.get("descriptionPlain")) or _clean_html(
+        payload.get("description")
     )
 
-    employment_types = (
-        [commitment]
-        if commitment
-        else []
-    )
+    hosted_url = _clean_text(payload.get("hostedUrl"))
 
-    description = (
-        _clean_text(payload.get("descriptionPlain"))
-        or _clean_html(payload.get("description"))
-    )
-
-    hosted_url = _clean_text(
-        payload.get("hostedUrl")
-    )
-
-    application_url = (
-        _clean_text(payload.get("applyUrl"))
-        or hosted_url
-        or source_url
-    )
+    application_url = _clean_text(payload.get("applyUrl")) or hosted_url or source_url
 
     return ExtractedJobPosting(
         title=title,
@@ -445,6 +384,7 @@ async def fetch_lever_job(
         valid_through=None,
         application_url=application_url,
     )
+
 
 async def extract_ats_job(
     url: str,
@@ -463,9 +403,7 @@ async def extract_ats_job(
         reference = parse_greenhouse_url(url)
 
         if reference is None:
-            raise JobSourceError(
-                "The Greenhouse job URL has an unsupported format."
-            )
+            raise JobSourceError("The Greenhouse job URL has an unsupported format.")
 
         job = await fetch_greenhouse_job(
             reference=reference,
@@ -478,14 +416,12 @@ async def extract_ats_job(
             extraction_method=JobSource.GREENHOUSE.value,
             final_url=url,
             content_sha256=_hash_job(job),
-)
+        )
     if source == JobSource.LEVER:
         reference = parse_lever_url(url)
 
         if reference is None:
-            raise JobSourceError(
-                "The Lever job URL has an unsupported format."
-            )
+            raise JobSourceError("The Lever job URL has an unsupported format.")
 
         job = await fetch_lever_job(
             reference=reference,
@@ -501,6 +437,7 @@ async def extract_ats_job(
         )
 
     return None
+
 
 def _hash_job(job: ExtractedJobPosting) -> str:
     """Create a stable hash from normalized job information."""

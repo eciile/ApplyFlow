@@ -8,7 +8,6 @@ from bs4 import BeautifulSoup
 
 from app.schemas import ExtractedJobPosting
 
-
 JSON_LD_CONTENT_TYPE = "application/ld+json"
 
 
@@ -35,12 +34,7 @@ def extract_job_posting_jsonld(
         if not isinstance(script_type, str):
             continue
 
-        normalized_type = (
-            script_type
-            .split(";", maxsplit=1)[0]
-            .strip()
-            .lower()
-        )
+        normalized_type = script_type.split(";", maxsplit=1)[0].strip().lower()
 
         if normalized_type != JSON_LD_CONTENT_TYPE:
             continue
@@ -67,10 +61,7 @@ def extract_job_posting_jsonld(
             if job is not None:
                 return job
 
-    raise JobPostingNotFoundError(
-        "No usable JobPosting JSON-LD was found "
-        "on the page."
-    )
+    raise JobPostingNotFoundError("No usable JobPosting JSON-LD was found on the page.")
 
 
 def _walk_json(value: Any) -> Iterator[dict[str, Any]]:
@@ -132,45 +123,26 @@ def _build_job_posting(
 ) -> ExtractedJobPosting | None:
     """Convert one JSON-LD node into our API schema."""
 
-    title = _clean_text(
-        node.get("title") or node.get("name")
-    )
+    title = _clean_text(node.get("title") or node.get("name"))
 
     if not title:
         return None
 
-    location = _extract_location(
-        node.get("jobLocation")
-    )
+    location = _extract_location(node.get("jobLocation"))
 
-    if (
-        location is None
-        and _is_remote_job(node.get("jobLocationType"))
-    ):
+    if location is None and _is_remote_job(node.get("jobLocationType")):
         location = "Remote"
 
-    application_url = _plain_string(
-        node.get("url")
-    ) or source_url
+    application_url = _plain_string(node.get("url")) or source_url
 
     return ExtractedJobPosting(
         title=title,
-        company=_extract_company(
-            node.get("hiringOrganization")
-        ),
+        company=_extract_company(node.get("hiringOrganization")),
         location=location,
-        description=_clean_text(
-            node.get("description")
-        ),
-        employment_types=_string_list(
-            node.get("employmentType")
-        ),
-        date_posted=_plain_string(
-            node.get("datePosted")
-        ),
-        valid_through=_plain_string(
-            node.get("validThrough")
-        ),
+        description=_clean_text(node.get("description")),
+        employment_types=_string_list(node.get("employmentType")),
+        date_posted=_plain_string(node.get("datePosted")),
+        valid_through=_plain_string(node.get("validThrough")),
         application_url=application_url,
     )
 
@@ -182,9 +154,7 @@ def _extract_company(value: Any) -> str | None:
         return _clean_text(value)
 
     if isinstance(value, dict):
-        return _clean_text(
-            value.get("name") or value.get("legalName")
-        )
+        return _clean_text(value.get("name") or value.get("legalName"))
 
     if isinstance(value, list):
         for organization in value:
@@ -204,9 +174,7 @@ def _extract_location(value: Any) -> str | None:
 
     if isinstance(value, list):
         locations = [
-            location
-            for item in value
-            if (location := _extract_location(item))
+            location for item in value if (location := _extract_location(item))
         ]
 
         unique_locations = list(dict.fromkeys(locations))
@@ -225,10 +193,7 @@ def _extract_location(value: Any) -> str | None:
         country = address.get("addressCountry")
 
         if isinstance(country, dict):
-            country = (
-                country.get("name")
-                or country.get("identifier")
-            )
+            country = country.get("name") or country.get("identifier")
 
         parts = [
             _plain_string(address.get("streetAddress")),
@@ -238,11 +203,7 @@ def _extract_location(value: Any) -> str | None:
             _plain_string(country),
         ]
 
-        cleaned_parts = [
-            part
-            for part in parts
-            if part
-        ]
+        cleaned_parts = [part for part in parts if part]
 
         if cleaned_parts:
             return ", ".join(cleaned_parts)
@@ -253,10 +214,7 @@ def _extract_location(value: Any) -> str | None:
 def _is_remote_job(value: Any) -> bool:
     """Detect Schema.org TELECOMMUTE job-location values."""
 
-    return any(
-        item.upper() == "TELECOMMUTE"
-        for item in _string_list(value)
-    )
+    return any(item.upper() == "TELECOMMUTE" for item in _string_list(value))
 
 
 def _string_list(value: Any) -> list[str]:

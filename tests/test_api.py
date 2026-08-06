@@ -1,32 +1,31 @@
-import pytest
-from datetime import date, datetime, timezone
-from fastapi.testclient import TestClient
-
-import app.main as main_module
-from app.main import app
-from app.services.job_page_fetcher import (
-    FetchedJobPage,
-    UnsupportedContentTypeError,
-)
 from collections.abc import Generator
+from datetime import UTC, date, datetime
 
+import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.main as main_module
 from app.database import Base, get_session
+from app.main import app
 from app.schemas import (
     ApplicationStatus,
     ExtractedJobPosting,
     JobRequirements,
 )
-from app.services.job_sources import JobExtractionResult
 from app.services.application_tracking import (
     assess_possible_ghosting,
 )
-from types import SimpleNamespace
+from app.services.job_page_fetcher import (
+    FetchedJobPage,
+    UnsupportedContentTypeError,
+)
+from app.services.job_sources import JobExtractionResult
 
 client = TestClient(app)
+
 
 @pytest.fixture(autouse=True)
 def isolated_database() -> Generator[None, None, None]:
@@ -52,9 +51,7 @@ def isolated_database() -> Generator[None, None, None]:
         with testing_session() as session:
             yield session
 
-    app.dependency_overrides[
-        get_session
-    ] = override_get_session
+    app.dependency_overrides[get_session] = override_get_session
 
     yield
 
@@ -62,25 +59,19 @@ def isolated_database() -> Generator[None, None, None]:
     Base.metadata.drop_all(test_engine)
     test_engine.dispose()
 
+
 def test_health_check() -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
-    assert response.headers["content-type"] == (
-        "application/json; charset=utf-8"
-    )
+    assert response.headers["content-type"] == ("application/json; charset=utf-8")
 
 
 def test_valid_job_url() -> None:
     response = client.post(
         "/jobs/validate",
-        json={
-            "url": (
-                "https://jobs.example.com/"
-                "positions/data-engineer"
-            )
-        },
+        json={"url": ("https://jobs.example.com/positions/data-engineer")},
     )
 
     assert response.status_code == 200
@@ -132,9 +123,7 @@ def test_fetch_job_page_endpoint(
 
     response = client.post(
         "/jobs/fetch",
-        json={
-            "url": "https://jobs.example.com/jobs/123"
-        },
+        json={"url": "https://jobs.example.com/jobs/123"},
     )
 
     assert response.status_code == 200
@@ -154,8 +143,7 @@ def test_fetch_endpoint_rejects_non_html_content(
         url: str,
     ) -> FetchedJobPage:
         raise UnsupportedContentTypeError(
-            "Expected an HTML page but received "
-            "'application/pdf'."
+            "Expected an HTML page but received 'application/pdf'."
         )
 
     monkeypatch.setattr(
@@ -166,9 +154,7 @@ def test_fetch_endpoint_rejects_non_html_content(
 
     response = client.post(
         "/jobs/fetch",
-        json={
-            "url": "https://jobs.example.com/job.pdf"
-        },
+        json={"url": "https://jobs.example.com/job.pdf"},
     )
 
     assert response.status_code == 415
@@ -257,9 +243,7 @@ def test_extract_job_posting_jsonld(
 
     response = client.post(
         "/jobs/extract",
-        json={
-            "url": "https://jobs.example.com/jobs/123"
-        },
+        json={"url": "https://jobs.example.com/jobs/123"},
     )
 
     assert response.status_code == 200
@@ -273,12 +257,8 @@ def test_extract_job_posting_jsonld(
 
     assert job["title"] == "Junior Data Engineer"
     assert job["company"] == "Example Company"
-    assert job["location"] == (
-        "Paris, Ile-de-France, 75001, FR"
-    )
-    assert job["description"] == (
-        "Build reliable pipelines."
-    )
+    assert job["location"] == ("Paris, Ile-de-France, 75001, FR")
+    assert job["description"] == ("Build reliable pipelines.")
     assert job["employment_types"] == [
         "FULL_TIME",
         "PERMANENT",
@@ -327,15 +307,11 @@ def test_extract_returns_422_without_usable_content(
 
     response = client.post(
         "/jobs/extract",
-        json={
-            "url": "https://jobs.example.com/jobs/123"
-        },
+        json={"url": "https://jobs.example.com/jobs/123"},
     )
 
     assert response.status_code == 422
-    assert "useful job information" in (
-        response.json()["detail"]
-    )
+    assert "useful job information" in (response.json()["detail"])
 
 
 def _fake_page(
@@ -350,9 +326,7 @@ def _fake_page(
         status_code=200,
         content_type="text/html",
         html=html,
-        bytes_downloaded=len(
-            html.encode("utf-8")
-        ),
+        bytes_downloaded=len(html.encode("utf-8")),
         redirect_count=0,
         content_sha256="a" * 64,
     )
@@ -406,6 +380,7 @@ def _import_application_test_job(
     assert response.status_code == 201
 
     return response.json()["job"]
+
 
 def test_import_job_is_saved_without_duplicates(
     monkeypatch: pytest.MonkeyPatch,
@@ -476,9 +451,7 @@ def test_import_job_is_saved_without_duplicates(
         lambda: FakeLlmClient(),
     )
 
-    request_body = {
-        "url": "https://jobs.example.com/jobs/123"
-    }
+    request_body = {"url": "https://jobs.example.com/jobs/123"}
 
     first_response = client.post(
         "/jobs/import",
@@ -492,9 +465,7 @@ def test_import_job_is_saved_without_duplicates(
 
     assert first_job["title"] == "Junior Data Engineer"
     assert first_job["company"] == "Example Company"
-    assert first_job["employment_types"] == [
-        "FULL_TIME"
-    ]
+    assert first_job["employment_types"] == ["FULL_TIME"]
     assert first_job["extraction_method"] == "json_ld"
 
     second_response = client.post(
@@ -504,10 +475,7 @@ def test_import_job_is_saved_without_duplicates(
 
     assert second_response.status_code == 200
     assert second_response.json()["created"] is False
-    assert (
-        second_response.json()["job"]["id"]
-        == first_job["id"]
-    )
+    assert second_response.json()["job"]["id"] == first_job["id"]
 
     list_response = client.get("/jobs")
 
@@ -521,6 +489,8 @@ def test_import_job_is_saved_without_duplicates(
     assert jobs[0]["qualifications"] == ["Bachelor's degree"]
     assert jobs[0]["soft_skills"] == ["Communication"]
     assert jobs[0]["languages"] == ["English"]
+
+
 def test_extract_endpoint_uses_greenhouse_adapter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -535,20 +505,20 @@ def test_extract_endpoint_uses_greenhouse_adapter(
                 description="Build reliable data pipelines.",
                 employment_types=[],
                 requirements=JobRequirements(
-                required_skills=[
-                    "Python",
-                    "SQL",
-                    "FastAPI",
-                ],
-                preferred_skills=[
-                    "Docker",
-                    "AWS",
-                ],
-                languages=[
-                    "French",
-                    "English",
-                ],
-            ),
+                    required_skills=[
+                        "Python",
+                        "SQL",
+                        "FastAPI",
+                    ],
+                    preferred_skills=[
+                        "Docker",
+                        "AWS",
+                    ],
+                    languages=[
+                        "French",
+                        "English",
+                    ],
+                ),
                 date_posted=None,
                 valid_through=None,
                 application_url=url,
@@ -566,12 +536,7 @@ def test_extract_endpoint_uses_greenhouse_adapter(
 
     response = client.post(
         "/jobs/extract",
-        json={
-            "url": (
-                "https://job-boards.greenhouse.io/"
-                "example/jobs/12345"
-            )
-        },
+        json={"url": ("https://job-boards.greenhouse.io/example/jobs/12345")},
     )
 
     assert response.status_code == 200
@@ -581,6 +546,7 @@ def test_extract_endpoint_uses_greenhouse_adapter(
     assert data["extraction_method"] == "greenhouse"
     assert data["job"]["title"] == "Junior Data Engineer"
     assert data["job"]["company"] == "Example Company"
+
 
 def test_extract_uses_llm_for_generic_html(
     monkeypatch: pytest.MonkeyPatch,
@@ -638,9 +604,7 @@ def test_extract_uses_llm_for_generic_html(
                 title="Junior Data Engineer",
                 company="Example Company",
                 location="Paris, France",
-                description=(
-                    "Develop and maintain reliable data pipelines."
-                ),
+                description=("Develop and maintain reliable data pipelines."),
                 employment_types=["FULL_TIME"],
                 date_posted=None,
                 valid_through=None,
@@ -654,9 +618,7 @@ def test_extract_uses_llm_for_generic_html(
             description: str,
         ) -> JobRequirements:
             assert title == "Junior Data Engineer"
-            assert description == (
-                "Develop and maintain reliable data pipelines."
-            )
+            assert description == ("Develop and maintain reliable data pipelines.")
             return JobRequirements(
                 required_skills=["Python", "SQL", "REST API"],
             )
@@ -675,12 +637,7 @@ def test_extract_uses_llm_for_generic_html(
 
     response = client.post(
         "/jobs/extract",
-        json={
-            "url": (
-                "https://company.example.com/"
-                "careers/junior-data-engineer"
-            )
-        },
+        json={"url": ("https://company.example.com/careers/junior-data-engineer")},
     )
 
     assert response.status_code == 200
@@ -697,6 +654,7 @@ def test_extract_uses_llm_for_generic_html(
         "SQL",
         "REST API",
     ]
+
 
 def test_import_persists_llm_extracted_job(
     monkeypatch: pytest.MonkeyPatch,
@@ -749,9 +707,7 @@ def test_import_persists_llm_extracted_job(
                 title="Junior Data Engineer",
                 company="Example Company",
                 location="Paris, France",
-                description=(
-                    "Build and maintain reliable data pipelines."
-                ),
+                description=("Build and maintain reliable data pipelines."),
                 employment_types=["FULL_TIME"],
                 requirements=JobRequirements(
                     required_skills=[
@@ -793,12 +749,7 @@ def test_import_persists_llm_extracted_job(
 
     response = client.post(
         "/jobs/import",
-        json={
-            "url": (
-                "https://company.example.com/"
-                "careers/junior-data-engineer"
-            )
-        },
+        json={"url": ("https://company.example.com/careers/junior-data-engineer")},
     )
 
     assert response.status_code == 201
@@ -808,19 +759,14 @@ def test_import_persists_llm_extracted_job(
     assert data["created"] is True
     assert data["job"]["title"] == "Junior Data Engineer"
     assert data["job"]["company"] == "Example Company"
-    assert data["job"]["employment_types"] == [
-        "FULL_TIME"
-    ]
+    assert data["job"]["employment_types"] == ["FULL_TIME"]
     assert data["job"]["extraction_method"] == "llm_html"
 
     list_response = client.get("/jobs")
 
     assert list_response.status_code == 200
     assert len(list_response.json()) == 1
-    assert (
-        list_response.json()[0]["extraction_method"]
-        == "llm_html"
-    )
+    assert list_response.json()[0]["extraction_method"] == "llm_html"
     assert data["job"]["required_skills"] == [
         "Python",
         "SQL",
@@ -839,6 +785,7 @@ def test_import_persists_llm_extracted_job(
         "English",
     ]
 
+
 def test_get_candidate_profile_returns_404_when_missing(
     isolated_database,
 ) -> None:
@@ -849,6 +796,7 @@ def test_get_candidate_profile_returns_404_when_missing(
     assert response.json() == {
         "detail": "Candidate profile not found.",
     }
+
 
 def test_put_candidate_profile_creates_and_updates_single_profile(
     isolated_database,
@@ -1218,18 +1166,14 @@ def test_employer_response_clears_provisional_ghosting(
     after_response = event_response.json()
     assert after_response["possibly_ghosted"] is False
     assert after_response["days_without_response"] is None
-    assert after_response["last_employer_response_at"].startswith(
-        "2026-08-04T12:30:00"
-    )
+    assert after_response["last_employer_response_at"].startswith("2026-08-04T12:30:00")
     employer_response_events = [
         event
         for event in after_response["events"]
         if event["event_type"] == "employer_response"
     ]
     assert len(employer_response_events) == 1
-    assert employer_response_events[0]["occurred_at"].startswith(
-        "2026-08-04T12:30:00"
-    )
+    assert employer_response_events[0]["occurred_at"].startswith("2026-08-04T12:30:00")
 
 
 def test_application_endpoints_distinguish_missing_records(
@@ -1240,15 +1184,11 @@ def test_application_endpoints_distinguish_missing_records(
         json={"status": "saved"},
     )
     assert missing_job_response.status_code == 404
-    assert missing_job_response.json() == {
-        "detail": "Job not found."
-    }
+    assert missing_job_response.json() == {"detail": "Job not found."}
 
     job = _import_application_test_job(monkeypatch)
 
-    missing_application_response = client.get(
-        f"/jobs/{job['id']}/application"
-    )
+    missing_application_response = client.get(f"/jobs/{job['id']}/application")
     assert missing_application_response.status_code == 404
     assert missing_application_response.json() == {
         "detail": "Job application not found."
@@ -1295,7 +1235,7 @@ def test_employer_response_prevents_ghosting_flag() -> None:
             15,
             10,
             0,
-            tzinfo=timezone.utc,
+            tzinfo=UTC,
         ),
         current_date=date(2026, 8, 1),
     )

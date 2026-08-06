@@ -1,13 +1,16 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from hashlib import sha256
 from urllib.parse import urljoin
+
 import httpx2
-from app.text_utils import repair_utf8_mojibake
+
 from app.services.url_security import (
     UnsafeUrlError,
     ensure_public_url,
 )
+from app.text_utils import repair_utf8_mojibake
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
@@ -27,8 +30,7 @@ REDIRECT_STATUS_CODES = {
 
 REQUEST_HEADERS = {
     "User-Agent": (
-        "JobMatch/0.1 "
-        "(personal job-search assistant; contact: local-development)"
+        "JobMatch/0.1 (personal job-search assistant; contact: local-development)"
     ),
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "en,fr;q=0.8",
@@ -153,14 +155,11 @@ async def _fetch_with_client(
 
                     if not location:
                         raise RedirectError(
-                            "The website returned a redirect "
-                            "without a destination."
+                            "The website returned a redirect without a destination."
                         )
 
                     if redirect_count >= MAX_REDIRECTS:
-                        raise RedirectError(
-                            "The website returned too many redirects."
-                        )
+                        raise RedirectError("The website returned too many redirects.")
 
                     current_url = urljoin(
                         str(response.url),
@@ -173,8 +172,7 @@ async def _fetch_with_client(
                     response.raise_for_status()
                 except httpx2.HTTPStatusError as exc:
                     raise JobPageHttpError(
-                        "The website returned HTTP status "
-                        f"{response.status_code}."
+                        f"The website returned HTTP status {response.status_code}."
                     ) from exc
 
                 content_type_header = response.headers.get(
@@ -183,31 +181,22 @@ async def _fetch_with_client(
                 )
 
                 content_type = (
-                    content_type_header
-                    .split(";", maxsplit=1)[0]
-                    .strip()
-                    .lower()
+                    content_type_header.split(";", maxsplit=1)[0].strip().lower()
                 )
 
                 if content_type not in ALLOWED_CONTENT_TYPES:
                     displayed_type = content_type or "missing"
 
                     raise UnsupportedContentTypeError(
-                        "Expected an HTML page but received "
-                        f"'{displayed_type}'."
+                        f"Expected an HTML page but received '{displayed_type}'."
                     )
 
                 declared_length = parse_content_length(
                     response.headers.get("content-length")
                 )
 
-                if (
-                    declared_length is not None
-                    and declared_length > MAX_RESPONSE_BYTES
-                ):
-                    raise PageTooLargeError(
-                        "The page exceeds the 2 MB download limit."
-                    )
+                if declared_length is not None and declared_length > MAX_RESPONSE_BYTES:
+                    raise PageTooLargeError("The page exceeds the 2 MB download limit.")
 
                 content = bytearray()
 
@@ -235,9 +224,7 @@ async def _fetch_with_client(
                     html=html,
                     bytes_downloaded=len(content_bytes),
                     redirect_count=redirect_count,
-                    content_sha256=sha256(
-                        content_bytes
-                    ).hexdigest(),
+                    content_sha256=sha256(content_bytes).hexdigest(),
                 )
 
         except (
@@ -249,13 +236,10 @@ async def _fetch_with_client(
         ):
             raise
         except httpx2.TimeoutException as exc:
-            raise JobPageTimeoutError(
-                "The website took too long to respond."
-            ) from exc
+            raise JobPageTimeoutError("The website took too long to respond.") from exc
         except httpx2.RequestError as exc:
-            raise JobPageConnectionError(
-                "The website could not be reached."
-            ) from exc
+            raise JobPageConnectionError("The website could not be reached.") from exc
+
 
 def _decode_html_bytes(
     content: bytes,
@@ -286,9 +270,7 @@ def _decode_html_bytes(
         tried.add(normalized)
 
         try:
-            return repair_utf8_mojibake(
-                content.decode(candidate)
-            )
+            return repair_utf8_mojibake(content.decode(candidate))
         except (UnicodeDecodeError, LookupError):
             continue
 

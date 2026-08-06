@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from bs4 import BeautifulSoup
 from pydantic import ValidationError
 from trafilatura import extract
+
 from app.schemas import GenericJobContent
 
 METADATA_LABELS = {
@@ -20,20 +22,20 @@ METADATA_LABELS = {
     "reference": "reference",
 }
 
+
 class GenericContentExtractionError(ValueError):
-    """"raised when useful content cannot be extracted from html"""
+    """ "raised when useful content cannot be extracted from html"""
+
 
 def extract_generic_job_content(
-        html:str,
-        source_url:str,
+    html: str,
+    source_url: str,
 ) -> GenericJobContent:
     """Extracts readable content from a generic job page."""
     if not html.strip():
-        raise GenericContentExtractionError(
-            "The job page contains no HTML content."
-        )
-    soup=BeautifulSoup(html, "html.parser")
-    page_title=_extract_page_title(soup)
+        raise GenericContentExtractionError("The job page contains no HTML content.")
+    soup = BeautifulSoup(html, "html.parser")
+    page_title = _extract_page_title(soup)
     metadata = _extract_page_metadata(soup)
     extracted_text = extract(
         html,
@@ -59,6 +61,7 @@ def extract_generic_job_content(
         raise GenericContentExtractionError(
             "The extracted page does not contain enough useful job information."
         ) from exc
+
 
 GENERIC_TITLE_MARKERS = {
     "détails offre",
@@ -134,10 +137,7 @@ def _extract_page_title(
 def _is_generic_page_title(title: str) -> bool:
     normalized = title.casefold()
 
-    return any(
-        marker in normalized
-        for marker in GENERIC_TITLE_MARKERS
-    )
+    return any(marker in normalized for marker in GENERIC_TITLE_MARKERS)
 
 
 def _extract_page_metadata(
@@ -147,19 +147,13 @@ def _extract_page_metadata(
 
     metadata: dict[str, str] = {}
 
-    for element in soup.find_all(
-        ["dt", "th", "p", "span", "div"]
-    ):
-        label = _normalize_optional_text(
-            element.get_text(" ", strip=True)
-        )
+    for element in soup.find_all(["dt", "th", "p", "span", "div"]):
+        label = _normalize_optional_text(element.get_text(" ", strip=True))
 
         if label is None:
             continue
 
-        key = METADATA_LABELS.get(
-            label.casefold().rstrip(":")
-        )
+        key = METADATA_LABELS.get(label.casefold().rstrip(":"))
 
         if key is None or key in metadata:
             continue
@@ -185,9 +179,7 @@ def _find_metadata_value(element: object) -> str | None:
         )()
 
         while sibling is not None:
-            value = _normalize_optional_text(
-                sibling.get_text(" ", strip=True)
-            )
+            value = _normalize_optional_text(sibling.get_text(" ", strip=True))
 
             if value is not None:
                 return value
