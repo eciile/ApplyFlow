@@ -1,5 +1,5 @@
 import pytest
-from datetime import date
+from datetime import date, datetime, timezone
 from fastapi.testclient import TestClient
 
 import app.main as main_module
@@ -15,7 +15,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_session
-from app.schemas import ExtractedJobPosting, JobRequirements
+from app.schemas import (
+    ApplicationStatus,
+    ExtractedJobPosting,
+    JobRequirements,
+)
 from app.services.job_sources import JobExtractionResult
 from app.services.application_tracking import (
     assess_possible_ghosting,
@@ -1279,3 +1283,34 @@ def test_provisional_ghosting_starts_at_twenty_one_days() -> None:
     assert at_threshold.days_without_response == 21
     assert at_threshold.possibly_ghosted is True
     assert at_threshold.ghosting_threshold_days == 21
+
+
+def test_employer_response_prevents_ghosting_flag() -> None:
+    assessment = assess_possible_ghosting(
+        status=ApplicationStatus.APPLIED,
+        applied_at=date(2026, 7, 1),
+        last_employer_response_at=datetime(
+            2026,
+            7,
+            15,
+            10,
+            0,
+            tzinfo=timezone.utc,
+        ),
+        current_date=date(2026, 8, 1),
+    )
+
+    assert assessment.days_without_response is None
+    assert assessment.possibly_ghosted is False
+
+
+def test_interview_status_is_not_possibly_ghosted() -> None:
+    assessment = assess_possible_ghosting(
+        status=ApplicationStatus.INTERVIEW,
+        applied_at=date(2026, 7, 1),
+        last_employer_response_at=None,
+        current_date=date(2026, 8, 1),
+    )
+
+    assert assessment.days_without_response == 31
+    assert assessment.possibly_ghosted is False

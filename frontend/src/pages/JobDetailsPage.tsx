@@ -7,6 +7,7 @@ import {
   type Job,
   type JobMatchResult,
 } from "../lib/api";
+import ApplicationTrackingPanel from "../components/ApplicationTrackingPanel";
 
 type SkillListProps = {
   title: string;
@@ -136,23 +137,23 @@ function formatLocationMatch(result: JobMatchResult): string {
 }
 
 function JobDetailsPage() {
-    const { jobId } = useParams();
-    const numericJobId = Number(jobId);
+  const { jobId } = useParams();
+  const numericJobId = Number(jobId);
 
-    const [job, setJob] = useState<Job | null>(null);
-    const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [matchResult, setMatchResult] =
-        useState<JobMatchResult | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [matchResult, setMatchResult] =
+    useState<JobMatchResult | null>(null);
 
-    const [isMatching, setIsMatching] = useState(false);
-    const [matchError, setMatchError] = useState<string | null>(null);
+  const [isMatching, setIsMatching] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
 
-    useEffect(() => {
+  useEffect(() => {
     if (!Number.isInteger(numericJobId) || numericJobId <= 0) {
-        setError("Invalid job ID.");
-        setIsLoading(false);
-        return;
+      setError("Invalid job ID.");
+      setIsLoading(false);
+      return;
     }
 
     const controller = new AbortController();
@@ -250,21 +251,21 @@ function JobDetailsPage() {
           <div className="job-metadata">
             <span>{job.location || "Location unavailable"}</span>
             <span>
-              {job.employment_types ||
+              {job.employment_types.join(", ") ||
                 "Employment type unavailable"}
             </span>
           </div>
         </div>
 
         <div className="job-detail-actions">
-            <button
+          <button
             type="button"
             className="primary-button"
             onClick={handleCalculateMatch}
             disabled={isMatching}
-            >
+          >
             {isMatching ? "Calculating…" : "Calculate match"}
-            </button>
+          </button>
 
           <a
             className="secondary-button"
@@ -277,72 +278,74 @@ function JobDetailsPage() {
         </div>
       </div>
 
-    {matchError && (
-    <div className="alert alert-error" role="alert">
-        {matchError}
-    </div>
-    )}
-
-    {matchResult && (
-    <article className="match-panel">
-        <div className="match-summary">
-        <div
-            className="match-score"
-            aria-label={`Match score ${matchResult.score} out of 100`}
-        >
-            <strong>{matchResult.score}</strong>
-            <span>/ 100</span>
+      {matchError && (
+        <div className="alert alert-error" role="alert">
+          {matchError}
         </div>
+      )}
 
-        <div>
-            <span className="eyebrow">Job compatibility</span>
-            <h2>{formatRecommendation(matchResult.recommendation)}</h2>
-            <p>
-            This score compares the job requirements with your saved
-            candidate profile.
-            </p>
-        </div>
-        </div>
+      {matchResult && (
+        <article className="match-panel">
+          <div className="match-summary">
+            <div
+              className="match-score"
+              aria-label={`Match score ${matchResult.score} out of 100`}
+            >
+              <strong>{matchResult.score}</strong>
+              <span>/ 100</span>
+            </div>
 
-        <div className="match-breakdown">
-        <MatchSkillGroup
-            title="Matching required skills"
-            items={matchResult.matching_required_skills}
-            positive
-        />
+            <div>
+              <span className="eyebrow">Job compatibility</span>
+              <h2>{formatRecommendation(matchResult.recommendation)}</h2>
+              <p>
+                This score compares the job requirements with your saved
+                candidate profile.
+              </p>
+            </div>
+          </div>
 
-        <MatchSkillGroup
-            title="Missing required skills"
-            items={matchResult.missing_required_skills}
-        />
+          <div className="match-breakdown">
+            <MatchSkillGroup
+              title="Matching required skills"
+              items={matchResult.matching_required_skills}
+              positive
+            />
 
-        <MatchSkillGroup
-            title="Matching preferred skills"
-            items={matchResult.matching_preferred_skills}
-            positive
-        />
+            <MatchSkillGroup
+              title="Missing required skills"
+              items={matchResult.missing_required_skills}
+            />
 
-        <MatchSkillGroup
-            title="Missing preferred skills"
-            items={matchResult.missing_preferred_skills}
-        />
-        </div>
+            <MatchSkillGroup
+              title="Matching preferred skills"
+              items={matchResult.matching_preferred_skills}
+              positive
+            />
 
-        <div className="compatibility-grid">
-        <CompatibilityItem
-            label="Location"
-            value={formatLocationMatch(matchResult)}
-            matched={matchResult.location_match}
-        />
+            <MatchSkillGroup
+              title="Missing preferred skills"
+              items={matchResult.missing_preferred_skills}
+            />
+          </div>
 
-        <CompatibilityItem
-            label="Employment type"
-            value={formatCompatibility(matchResult.employment_type_match)}
-            matched={matchResult.employment_type_match}
-        />
-        </div>
-    </article>
-    )}
+          <div className="compatibility-grid">
+            <CompatibilityItem
+              label="Location"
+              value={formatLocationMatch(matchResult)}
+              matched={matchResult.location_match}
+            />
+
+            <CompatibilityItem
+              label="Employment type"
+              value={formatCompatibility(matchResult.employment_type_match)}
+              matched={matchResult.employment_type_match}
+            />
+          </div>
+        </article>
+      )}
+
+      <ApplicationTrackingPanel jobId={job.id} />
 
       <div className="job-detail-grid">
         <article className="panel job-description-panel">

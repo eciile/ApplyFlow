@@ -252,3 +252,120 @@ export async function getApplications(
 
   return response.json() as Promise<ApplicationListItem[]>;
 }
+
+export type ApplicationEventType =
+  | "status_changed"
+  | "applied"
+  | "follow_up_sent"
+  | "employer_response"
+  | "interview"
+  | "offer"
+  | "rejection"
+  | "note_added";
+
+export type ApplicationEvent = {
+  id: number;
+  event_type: ApplicationEventType;
+  occurred_at: string;
+  notes: string | null;
+  created_at: string;
+};
+
+export type JobApplication = {
+  id: number;
+  job_id: number;
+  status: ApplicationStatus;
+  applied_at: string | null;
+  follow_up_at: string | null;
+  last_follow_up_sent_at: string | null;
+  last_activity_at: string;
+  last_employer_response_at: string | null;
+  next_action: string | null;
+  notes: string | null;
+  days_without_response: number | null;
+  possibly_ghosted: boolean;
+  ghosting_threshold_days: number;
+  events: ApplicationEvent[];
+};
+
+export type JobApplicationInput = {
+  status: ApplicationStatus;
+  applied_at: string | null;
+  follow_up_at: string | null;
+  next_action: string | null;
+  notes: string | null;
+};
+
+export type ApplicationEventInput = {
+  event_type: ApplicationEventType;
+  notes: string | null;
+};
+
+export async function getJobApplication(
+  jobId: number,
+  signal?: AbortSignal,
+): Promise<JobApplication | null> {
+  const response = await fetch(
+    `${API_BASE_URL}/jobs/${jobId}/application`,
+    {
+      headers: {
+        Accept: "application/json",
+      },
+      signal,
+    },
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<JobApplication>;
+}
+
+export async function saveJobApplication(
+  jobId: number,
+  application: JobApplicationInput,
+): Promise<JobApplication> {
+  const response = await fetch(
+    `${API_BASE_URL}/jobs/${jobId}/application`,
+    {
+      method: "PUT",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(application),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<JobApplication>;
+}
+
+export async function addApplicationEvent(
+  jobId: number,
+  event: ApplicationEventInput,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/jobs/${jobId}/application/events`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(event),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+}
