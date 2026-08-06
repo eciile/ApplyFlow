@@ -489,6 +489,21 @@ def list_jobs(
         for job in jobs
     ]
 
+@app.get("/jobs/{job_id}", response_model=StoredJobResponse)
+def get_job(
+    job_id: int,
+    db: Session = Depends(get_session),
+) -> Job:
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    return job
+
 @app.get(
     "/profile",
     response_model=CandidateProfileResponse,

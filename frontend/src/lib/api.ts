@@ -9,26 +9,19 @@ export type HealthResponse = {
 
 export type Job = {
   id: number;
-  source_url: string;
-  final_url: string;
-  application_url: string;
-  content_sha256: string;
-  title: string;
+  title: string | null;
   company: string | null;
   location: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  description: string | null;
   employment_types: string[];
-  required_skills: string[];
-  preferred_skills: string[];
-  qualifications: string[];
-  soft_skills: string[];
-  languages: string[];
-  date_posted: string | null;
-  valid_through: string | null;
-  created_at: string;
-  extraction_method: string;
+  source_url: string;
+  application_url?: string | null;
+  description?: string | null;
+  required_skills?: string[];
+  preferred_skills?: string[];
+  qualifications?: string[];
+  soft_skills?: string[];
+  languages?: string[];
+  created_at?: string;
 };
 
 export type JobImportResponse = {
@@ -79,6 +72,24 @@ export async function getJobs(signal?: AbortSignal): Promise<Job[]> {
   }
 
   return response.json() as Promise<Job[]>;
+}
+
+export async function getJob(
+  jobId: number,
+  signal?: AbortSignal,
+): Promise<Job> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, {
+    headers: {
+      Accept: "application/json",
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<Job>;
 }
 
 export async function importJob(url: string): Promise<JobImportResponse> {

@@ -10,6 +10,7 @@ import {
   importJob,
   type Job,
 } from "../lib/api";
+import { Link } from "react-router";
 
 function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -176,14 +177,23 @@ function JobsPage() {
                 </span>
               </div>
 
-              <a
-                className="secondary-link"
-                href={job.source_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                View original posting
-              </a>
+              <div className="job-card-actions">
+                <Link
+                  className="secondary-link"
+                  to={`/jobs/${job.id}`}
+                >
+                  View details
+                </Link>
+
+                <a
+                  className="secondary-link"
+                  href={job.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Original posting
+                </a>
+              </div>
             </article>
           ))}
         </div>
