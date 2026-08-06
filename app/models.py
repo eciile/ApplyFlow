@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import (
+    JSON,
     Date,
     DateTime,
+    Float,
     ForeignKey,
-    Integer,
     String,
     Text,
     UniqueConstraint,
     func,
-    Float,
-    JSON,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,7 +21,7 @@ from app.database import Base
 def utc_now() -> datetime:
     """Return the current UTC time."""
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Job(Base):
@@ -133,14 +132,13 @@ class Job(Base):
         default=utc_now,
     )
 
-    application: Mapped[
-        "JobApplication | None"
-    ] = relationship(
+    application: Mapped[JobApplication | None] = relationship(
         back_populates="job",
         cascade="all, delete-orphan",
         passive_deletes=True,
         uselist=False,
     )
+
 
 class CandidateProfile(Base):
     """The local candidate profile used for job matching."""
@@ -183,11 +181,9 @@ class CandidateProfile(Base):
         server_default="30",
     )
 
-    years_of_experience: Mapped[float | None] = (
-        mapped_column(
-            Float,
-            nullable=True,
-        )
+    years_of_experience: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
     )
 
     skills: Mapped[list[str]] = mapped_column(
@@ -196,28 +192,22 @@ class CandidateProfile(Base):
         default=list,
     )
 
-    languages: Mapped[list[dict[str, str | None]]] = (
-        mapped_column(
-            JSON,
-            nullable=False,
-            default=list,
-        )
+    languages: Mapped[list[dict[str, str | None]]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
     )
 
-    preferred_locations: Mapped[list[str]] = (
-        mapped_column(
-            JSON,
-            nullable=False,
-            default=list,
-        )
+    preferred_locations: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
     )
 
-    preferred_employment_types: Mapped[list[str]] = (
-        mapped_column(
-            JSON,
-            nullable=False,
-            default=list,
-        )
+    preferred_employment_types: Mapped[list[str]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -232,6 +222,8 @@ class CandidateProfile(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
 class JobApplication(Base):
     """Tracks the current state of one job application."""
 
@@ -277,9 +269,7 @@ class JobApplication(Base):
         server_default=func.now(),
     )
 
-    last_employer_response_at: Mapped[
-        datetime | None
-    ] = mapped_column(
+    last_employer_response_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
     )
@@ -307,16 +297,14 @@ class JobApplication(Base):
         onupdate=func.now(),
     )
 
-    job: Mapped["Job"] = relationship(
+    job: Mapped[Job] = relationship(
         back_populates="application",
     )
 
-    events: Mapped[list["ApplicationEvent"]] = (
-        relationship(
-            back_populates="application",
-            cascade="all, delete-orphan",
-            order_by="ApplicationEvent.occurred_at",
-        )
+    events: Mapped[list[ApplicationEvent]] = relationship(
+        back_populates="application",
+        cascade="all, delete-orphan",
+        order_by="ApplicationEvent.occurred_at",
     )
 
 
@@ -359,8 +347,6 @@ class ApplicationEvent(Base):
         server_default=func.now(),
     )
 
-    application: Mapped["JobApplication"] = (
-        relationship(
-            back_populates="events",
-        )
+    application: Mapped[JobApplication] = relationship(
+        back_populates="events",
     )

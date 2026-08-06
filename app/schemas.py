@@ -1,6 +1,7 @@
-from ipaddress import ip_address
 from datetime import date, datetime
 from enum import StrEnum
+from ipaddress import ip_address
+
 from pydantic import (  # type: ignore[reportMissingImports]
     BaseModel,
     ConfigDict,
@@ -9,6 +10,7 @@ from pydantic import (  # type: ignore[reportMissingImports]
     field_validator,
     model_validator,
 )
+
 from app.text_utils import repair_utf8_mojibake
 
 BLOCKED_HOSTNAMES = {
@@ -22,9 +24,7 @@ class JobUrlRequest(BaseModel):
 
     url: HttpUrl = Field(
         description="Public HTTP or HTTPS URL of a job posting.",
-        examples=[
-            "https://jobs.example.com/positions/data-engineer"
-        ],
+        examples=["https://jobs.example.com/positions/data-engineer"],
     )
 
     @field_validator("url")
@@ -38,9 +38,7 @@ class JobUrlRequest(BaseModel):
         host = url.host
 
         if not host:
-            raise ValueError(
-                "The URL must include a hostname."
-            )
+            raise ValueError("The URL must include a hostname.")
 
         normalized_host = host.lower().rstrip(".")
 
@@ -49,9 +47,7 @@ class JobUrlRequest(BaseModel):
             or normalized_host.endswith(".localhost")
             or normalized_host.endswith(".local")
         ):
-            raise ValueError(
-                "Local URLs are not allowed."
-            )
+            raise ValueError("Local URLs are not allowed.")
 
         try:
             address = ip_address(normalized_host)
@@ -59,9 +55,7 @@ class JobUrlRequest(BaseModel):
             return url
 
         if not address.is_global:
-            raise ValueError(
-                "Private or local IP addresses are not allowed."
-            )
+            raise ValueError("Private or local IP addresses are not allowed.")
 
         return url
 
@@ -86,6 +80,7 @@ class JobPageFetchResponse(BaseModel):
     bytes_downloaded: int
     redirect_count: int
     content_sha256: str
+
 
 class JobRequirements(BaseModel):
     """Structured requirements requested by a job posting."""
@@ -123,8 +118,7 @@ class JobRequirements(BaseModel):
     languages: list[str] = Field(
         default_factory=list,
         description=(
-            "Spoken or written human languages explicitly required from "
-            "the candidate."
+            "Spoken or written human languages explicitly required from the candidate."
         ),
     )
 
@@ -148,9 +142,7 @@ class JobRequirements(BaseModel):
             value = [value]
 
         if not isinstance(value, list):
-            raise ValueError(
-                "Requirements must be provided as a list."
-            )
+            raise ValueError("Requirements must be provided as a list.")
 
         normalized: list[str] = []
         seen: set[str] = set()
@@ -159,9 +151,7 @@ class JobRequirements(BaseModel):
             if not isinstance(item, str):
                 continue
 
-            cleaned = repair_utf8_mojibake(
-                " ".join(item.split())
-            )
+            cleaned = repair_utf8_mojibake(" ".join(item.split()))
 
             if not cleaned:
                 continue
@@ -184,19 +174,16 @@ class JobRequirements(BaseModel):
         A required skill must not also appear as preferred.
         """
 
-        required_keys = {
-            _skill_comparison_key(skill)
-            for skill in self.required_skills
-        }
+        required_keys = {_skill_comparison_key(skill) for skill in self.required_skills}
 
         self.preferred_skills = [
             skill
             for skill in self.preferred_skills
-            if _skill_comparison_key(skill)
-            not in required_keys
+            if _skill_comparison_key(skill) not in required_keys
         ]
 
         return self
+
 
 class ExtractedJobPosting(BaseModel):
     """Structured information extracted from a job posting."""
@@ -211,12 +198,8 @@ class ExtractedJobPosting(BaseModel):
     company: str | None = None
     location: str | None = None
     description: str | None = None
-    employment_types: list[str] = Field(
-        default_factory=list
-    )
-    requirements: JobRequirements = Field(
-    default_factory=JobRequirements
-    )
+    employment_types: list[str] = Field(default_factory=list)
+    requirements: JobRequirements = Field(default_factory=JobRequirements)
     date_posted: str | None = None
     valid_through: str | None = None
     application_url: str
@@ -236,9 +219,7 @@ class ExtractedJobPosting(BaseModel):
         value: object,
     ) -> object:
         if isinstance(value, str):
-            cleaned = repair_utf8_mojibake(
-                value.strip()
-            )
+            cleaned = repair_utf8_mojibake(value.strip())
             return cleaned or None
 
         return value
@@ -259,16 +240,13 @@ class ExtractedJobPosting(BaseModel):
             value = [value]
 
         if not isinstance(value, list):
-            raise ValueError(
-                "Employment types must be a list."
-            )
+            raise ValueError("Employment types must be a list.")
 
         return list(
             dict.fromkeys(
                 repair_utf8_mojibake(item.strip())
                 for item in value
-                if isinstance(item, str)
-                and item.strip()
+                if isinstance(item, str) and item.strip()
             )
         )
 
@@ -285,11 +263,11 @@ class ExtractedJobPosting(BaseModel):
 
         if not any(useful_optional_fields):
             raise ValueError(
-                "The extracted job does not contain "
-                "enough useful information."
+                "The extracted job does not contain enough useful information."
             )
 
         return self
+
 
 class GenericJobContent(BaseModel):
     """Content and metadata extracted from a generic job page."""
@@ -297,9 +275,8 @@ class GenericJobContent(BaseModel):
     page_title: str | None = None
     text: str = Field(min_length=200)
     source_url: str
-    metadata: dict[str, str] = Field(
-        default_factory=dict
-    )
+    metadata: dict[str, str] = Field(default_factory=dict)
+
 
 class JobExtractionResponse(BaseModel):
     """Successful structured job-extraction response."""
@@ -307,6 +284,7 @@ class JobExtractionResponse(BaseModel):
     extracted: bool
     extraction_method: str
     job: ExtractedJobPosting
+
 
 class StoredJobResponse(BaseModel):
     """A job posting persisted in the database."""
@@ -336,7 +314,6 @@ class StoredJobResponse(BaseModel):
     valid_through: str | None
     created_at: datetime
     extraction_method: str
-    
 
 
 class JobImportResponse(BaseModel):
@@ -345,23 +322,26 @@ class JobImportResponse(BaseModel):
     created: bool
     job: StoredJobResponse
 
+
 class CandidateLanguage(BaseModel):
     """a spoken language and the candidate's proficiency level"""
+
     model_config = ConfigDict(str_strip_whitespace=True)
     name: str = Field(min_length=1)
     level: str | None = None
+
     @field_validator("level", mode="before")
     @classmethod
     def blank_level_to_none(cls, value: object) -> object:
         if isinstance(value, str):
-            cleaned = repair_utf8_mojibake(
-                value.strip()
-            )
+            cleaned = repair_utf8_mojibake(value.strip())
             return cleaned or None
         return value
 
+
 class CandidateProfileInput(BaseModel):
     """Candidate profile input for job matching."""
+
     model_config = ConfigDict(str_strip_whitespace=True)
     full_name: str = Field(min_length=1)
     headline: str | None = None
@@ -432,9 +412,7 @@ class CandidateProfileInput(BaseModel):
             value = [value]
 
         if not isinstance(value, list):
-            raise ValueError(
-                "The value must be a list of strings."
-            )
+            raise ValueError("The value must be a list of strings.")
 
         normalized: list[str] = []
         seen: set[str] = set()
@@ -457,10 +435,9 @@ class CandidateProfileInput(BaseModel):
             normalized.append(cleaned)
 
         return normalized
-    
-class CandidateProfileResponse(
-    CandidateProfileInput
-):
+
+
+class CandidateProfileResponse(CandidateProfileInput):
     """Stored candidate profile returned by the API."""
 
     model_config = ConfigDict(
@@ -470,6 +447,7 @@ class CandidateProfileResponse(
     id: int
     created_at: datetime
     updated_at: datetime
+
 
 class MatchCategoryBreakdown(BaseModel):
     """Score details for one matching category."""
@@ -514,14 +492,14 @@ class JobMatchResponse(BaseModel):
         MatchCategoryBreakdown,
     ]
 
+
 def _skill_comparison_key(
     value: str,
 ) -> str:
     """Create a basic key for duplicate detection."""
 
-    return " ".join(
-        value.casefold().split()
-    )
+    return " ".join(value.casefold().split())
+
 
 class ApplicationStatus(StrEnum):
     SAVED = "saved"
@@ -595,6 +573,7 @@ class ApplicationEventInput(BaseModel):
 
         return value
 
+
 class ApplicationEventResponse(BaseModel):
     """An event returned in an application's history."""
 
@@ -639,6 +618,7 @@ class JobApplicationResponse(BaseModel):
 
     created_at: datetime
     updated_at: datetime
+
 
 class ApplicationListItemResponse(BaseModel):
     """Compact application summary for the tracking list."""

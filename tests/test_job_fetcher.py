@@ -1,42 +1,42 @@
 import asyncio
 import socket
+from types import SimpleNamespace
 
 import httpx2
 import pytest
 
 import app.services.job_page_fetcher as fetcher_module
 import app.services.url_security as security_module
+from app.config import Settings
+from app.schemas import ExtractedJobPosting, GenericJobContent
+from app.services.generic_html_extractor import (
+    GenericContentExtractionError,
+    extract_generic_job_content,
+)
 from app.services.job_page_fetcher import (
     PageTooLargeError,
     UnsupportedContentTypeError,
     fetch_job_page,
 )
+from app.services.job_sources import (
+    GreenhouseReference,
+    JobSource,
+    LeverReference,
+    detect_job_source,
+    extract_ats_job,
+    fetch_greenhouse_job,
+    fetch_lever_job,
+    parse_greenhouse_url,
+    parse_lever_url,
+)
+from app.services.llm_job_extractor import (
+    OllamaJobExtractionClient,
+)
 from app.services.url_security import (
     UnsafeUrlError,
     ensure_public_url,
 )
-from app.services.job_sources import (
-    GreenhouseReference,
-    JobSource,
-    detect_job_source,
-    parse_greenhouse_url,
-    fetch_greenhouse_job,
-    parse_lever_url,
-    fetch_lever_job,
-    LeverReference,
-    extract_ats_job,
-)
-from app.services.generic_html_extractor import (
-    GenericContentExtractionError,
-    extract_generic_job_content,
-)
-from types import SimpleNamespace
 
-from app.config import Settings
-from app.schemas import ExtractedJobPosting, GenericJobContent
-from app.services.llm_job_extractor import (
-    OllamaJobExtractionClient,
-)
 
 async def allow_mock_url(_: str) -> None:
     """
@@ -61,14 +61,8 @@ def test_fetch_html_page(
     ) -> httpx2.Response:
         return httpx2.Response(
             status_code=200,
-            headers={
-                "Content-Type": "text/html; charset=utf-8"
-            },
-            content=(
-                b"<html><body>"
-                b"<h1>Data Engineer</h1>"
-                b"</body></html>"
-            ),
+            headers={"Content-Type": "text/html; charset=utf-8"},
+            content=(b"<html><body><h1>Data Engineer</h1></body></html>"),
             request=request,
         )
 
@@ -113,11 +107,7 @@ def test_redirect_destination_is_checked(
         if request.url.host == "jobs.example.com":
             return httpx2.Response(
                 status_code=302,
-                headers={
-                    "Location": (
-                        "https://careers.example.org/jobs/123"
-                    )
-                },
+                headers={"Location": ("https://careers.example.org/jobs/123")},
                 request=request,
             )
 
@@ -142,9 +132,7 @@ def test_redirect_destination_is_checked(
     page = asyncio.run(run_test())
 
     assert page.redirect_count == 1
-    assert page.final_url == (
-        "https://careers.example.org/jobs/123"
-    )
+    assert page.final_url == ("https://careers.example.org/jobs/123")
 
     assert checked_urls == [
         "https://jobs.example.com/jobs/123",
@@ -246,11 +234,8 @@ def test_domain_resolving_to_private_ip_is_rejected(
         UnsafeUrlError,
         match="non-public IP",
     ):
-        asyncio.run(
-            ensure_public_url(
-                "https://jobs.example.com/jobs/123"
-            )
-        )
+        asyncio.run(ensure_public_url("https://jobs.example.com/jobs/123"))
+
 
 @pytest.mark.parametrize(
     ("url", "expected_source"),
@@ -283,25 +268,19 @@ def test_detect_job_source(
 ) -> None:
     assert detect_job_source(url) == expected_source
 
+
 @pytest.mark.parametrize(
     ("url", "expected_reference"),
     [
         (
-            (
-                "https://job-boards.greenhouse.io/"
-                "example/jobs/12345"
-            ),
+            ("https://job-boards.greenhouse.io/example/jobs/12345"),
             GreenhouseReference(
                 board_token="example",
                 job_id="12345",
             ),
         ),
         (
-            (
-                "https://boards.greenhouse.io/"
-                "another-company/jobs/98765"
-                "?source=linkedin"
-            ),
+            ("https://boards.greenhouse.io/another-company/jobs/98765?source=linkedin"),
             GreenhouseReference(
                 board_token="another-company",
                 job_id="98765",
@@ -312,10 +291,7 @@ def test_detect_job_source(
             None,
         ),
         (
-            (
-                "https://job-boards.greenhouse.io/"
-                "example/jobs/not-a-number"
-            ),
+            ("https://job-boards.greenhouse.io/example/jobs/not-a-number"),
             None,
         ),
         (
@@ -330,13 +306,13 @@ def test_parse_greenhouse_url(
 ) -> None:
     assert parse_greenhouse_url(url) == expected_reference
 
+
 def test_fetch_greenhouse_job() -> None:
     async def handler(
         request: httpx2.Request,
     ) -> httpx2.Response:
         assert str(request.url) == (
-            "https://boards-api.greenhouse.io/"
-            "v1/boards/example/jobs/12345"
+            "https://boards-api.greenhouse.io/v1/boards/example/jobs/12345"
         )
 
         return httpx2.Response(
@@ -345,24 +321,11 @@ def test_fetch_greenhouse_job() -> None:
                 "id": 12345,
                 "title": "Junior Data Engineer",
                 "company_name": "Example Company",
-                "location": {
-                    "name": "Paris, France"
-                },
-                "content": (
-                    "&lt;p&gt;"
-                    "Build reliable data pipelines."
-                    "&lt;/p&gt;"
-                ),
-                "first_published": (
-                    "2026-07-01T09:00:00Z"
-                ),
-                "application_deadline": (
-                    "2026-08-15T23:59:00Z"
-                ),
-                "absolute_url": (
-                    "https://job-boards.greenhouse.io/"
-                    "example/jobs/12345"
-                ),
+                "location": {"name": "Paris, France"},
+                "content": ("&lt;p&gt;Build reliable data pipelines.&lt;/p&gt;"),
+                "first_published": ("2026-07-01T09:00:00Z"),
+                "application_deadline": ("2026-08-15T23:59:00Z"),
+                "absolute_url": ("https://job-boards.greenhouse.io/example/jobs/12345"),
             },
             request=request,
         )
@@ -378,10 +341,7 @@ def test_fetch_greenhouse_job() -> None:
                     board_token="example",
                     job_id="12345",
                 ),
-                source_url=(
-                    "https://job-boards.greenhouse.io/"
-                    "example/jobs/12345"
-                ),
+                source_url=("https://job-boards.greenhouse.io/example/jobs/12345"),
                 client=client,
             )
 
@@ -390,40 +350,25 @@ def test_fetch_greenhouse_job() -> None:
     assert job.title == "Junior Data Engineer"
     assert job.company == "Example Company"
     assert job.location == "Paris, France"
-    assert job.description == (
-        "Build reliable data pipelines."
-    )
-    assert job.date_posted == (
-        "2026-07-01T09:00:00Z"
-    )
-    assert job.valid_through == (
-        "2026-08-15T23:59:00Z"
-    )
+    assert job.description == ("Build reliable data pipelines.")
+    assert job.date_posted == ("2026-07-01T09:00:00Z")
+    assert job.valid_through == ("2026-08-15T23:59:00Z")
     assert job.employment_types == []
+
 
 @pytest.mark.parametrize(
     ("url", "expected_reference"),
     [
         (
-            (
-                "https://jobs.lever.co/"
-                "example/"
-                "f2f01e16-27f8-4711-a728-7d49499795a0"
-            ),
+            ("https://jobs.lever.co/example/f2f01e16-27f8-4711-a728-7d49499795a0"),
             LeverReference(
                 site="example",
-                posting_id=(
-                    "f2f01e16-27f8-4711-a728-7d49499795a0"
-                ),
+                posting_id=("f2f01e16-27f8-4711-a728-7d49499795a0"),
                 api_host="api.lever.co",
             ),
         ),
         (
-            (
-                "https://jobs.eu.lever.co/"
-                "example/eu-posting-id"
-                "?source=linkedin"
-            ),
+            ("https://jobs.eu.lever.co/example/eu-posting-id?source=linkedin"),
             LeverReference(
                 site="example",
                 posting_id="eu-posting-id",
@@ -446,17 +391,15 @@ def test_parse_lever_url(
 ) -> None:
     assert parse_lever_url(url) == expected_reference
 
+
 def test_fetch_lever_job() -> None:
-    posting_id = (
-        "f2f01e16-27f8-4711-a728-7d49499795a0"
-    )
+    posting_id = "f2f01e16-27f8-4711-a728-7d49499795a0"
 
     async def handler(
         request: httpx2.Request,
     ) -> httpx2.Response:
         assert str(request.url) == (
-            "https://api.lever.co/v0/postings/"
-            f"example/{posting_id}"
+            f"https://api.lever.co/v0/postings/example/{posting_id}"
         )
 
         return httpx2.Response(
@@ -470,18 +413,9 @@ def test_fetch_lever_job() -> None:
                     "team": "Engineering",
                 },
                 "country": "FR",
-                "descriptionPlain": (
-                    "Develop and deploy "
-                    "machine-learning systems."
-                ),
-                "hostedUrl": (
-                    "https://jobs.lever.co/"
-                    f"example/{posting_id}"
-                ),
-                "applyUrl": (
-                    "https://jobs.lever.co/"
-                    f"example/{posting_id}/apply"
-                ),
+                "descriptionPlain": ("Develop and deploy machine-learning systems."),
+                "hostedUrl": (f"https://jobs.lever.co/example/{posting_id}"),
+                "applyUrl": (f"https://jobs.lever.co/example/{posting_id}/apply"),
             },
             request=request,
         )
@@ -498,31 +432,19 @@ def test_fetch_lever_job() -> None:
                     posting_id=posting_id,
                     api_host="api.lever.co",
                 ),
-                source_url=(
-                    "https://jobs.lever.co/"
-                    f"example/{posting_id}"
-                ),
+                source_url=(f"https://jobs.lever.co/example/{posting_id}"),
                 client=client,
             )
 
     job = asyncio.run(run_test())
 
-    assert job.title == (
-        "Machine Learning Engineer"
-    )
+    assert job.title == ("Machine Learning Engineer")
     assert job.company is None
     assert job.location == "Rennes, FR"
-    assert job.description == (
-        "Develop and deploy "
-        "machine-learning systems."
-    )
-    assert job.employment_types == [
-        "Full-time"
-    ]
-    assert job.application_url == (
-        "https://jobs.lever.co/"
-        f"example/{posting_id}/apply"
-    )
+    assert job.description == ("Develop and deploy machine-learning systems.")
+    assert job.employment_types == ["Full-time"]
+    assert job.application_url == (f"https://jobs.lever.co/example/{posting_id}/apply")
+
 
 def test_extract_ats_job_dispatcher() -> None:
     async def handler(
@@ -534,16 +456,9 @@ def test_extract_ats_job_dispatcher() -> None:
                 "id": 12345,
                 "title": "Junior Data Engineer",
                 "company_name": "Example Company",
-                "location": {
-                    "name": "Paris, France"
-                },
-                "content": (
-                    "<p>Build reliable data pipelines.</p>"
-                ),
-                "absolute_url": (
-                    "https://job-boards.greenhouse.io/"
-                    "example/jobs/12345"
-                ),
+                "location": {"name": "Paris, France"},
+                "content": ("<p>Build reliable data pipelines.</p>"),
+                "absolute_url": ("https://job-boards.greenhouse.io/example/jobs/12345"),
             },
             request=request,
         )
@@ -555,38 +470,25 @@ def test_extract_ats_job_dispatcher() -> None:
             transport=transport,
         ) as client:
             greenhouse_result = await extract_ats_job(
-                (
-                    "https://job-boards.greenhouse.io/"
-                    "example/jobs/12345"
-                ),
+                ("https://job-boards.greenhouse.io/example/jobs/12345"),
                 client=client,
             )
 
             generic_result = await extract_ats_job(
-                (
-                    "https://company.example.com/"
-                    "careers/data-engineer"
-                ),
+                ("https://company.example.com/careers/data-engineer"),
                 client=client,
             )
 
             return greenhouse_result, generic_result
 
-    greenhouse_result, generic_result = asyncio.run(
-        run_test()
-    )
+    greenhouse_result, generic_result = asyncio.run(run_test())
 
     assert greenhouse_result is not None
-    assert (
-        greenhouse_result.extraction_method
-        == JobSource.GREENHOUSE
-    )
-    assert (
-        greenhouse_result.job.title
-        == "Junior Data Engineer"
-    )
+    assert greenhouse_result.extraction_method == JobSource.GREENHOUSE
+    assert greenhouse_result.job.title == "Junior Data Engineer"
 
     assert generic_result is None
+
 
 def test_extract_generic_job_content() -> None:
     html = """
@@ -646,21 +548,18 @@ def test_extract_generic_job_content() -> None:
 
     result = extract_generic_job_content(
         html=html,
-        source_url=(
-            "https://company.example.com/"
-            "careers/junior-data-engineer"
-        ),
+        source_url=("https://company.example.com/careers/junior-data-engineer"),
     )
 
     assert result.page_title == "Junior Data Engineer"
     assert result.source_url == (
-        "https://company.example.com/"
-        "careers/junior-data-engineer"
+        "https://company.example.com/careers/junior-data-engineer"
     )
     assert "Junior Data Engineer" in result.text
     assert "Develop Python and SQL pipelines" in result.text
     assert "console.log" not in result.text
     assert len(result.text) >= 200
+
 
 def test_generic_content_rejects_short_page() -> None:
     html = """
@@ -679,6 +578,7 @@ def test_generic_content_rejects_short_page() -> None:
             html=html,
             source_url="https://company.example.com/jobs/123",
         )
+
 
 def test_ollama_job_extraction_client() -> None:
     class FakeOllamaClient:
@@ -759,9 +659,7 @@ def test_ollama_job_extraction_client() -> None:
         )
 
         content = GenericJobContent(
-            page_title=(
-                "Junior Data Engineer | Example Company"
-            ),
+            page_title=("Junior Data Engineer | Example Company"),
             text=(
                 "Example Company is looking for a Junior Data "
                 "Engineer to build reliable Python and SQL data "
@@ -770,10 +668,7 @@ def test_ollama_job_extraction_client() -> None:
                 "and collaborate with engineering teams. This "
                 "is a full-time role based in Paris, France."
             ),
-            source_url=(
-                "https://company.example.com/"
-                "careers/junior-data-engineer"
-            ),
+            source_url=("https://company.example.com/careers/junior-data-engineer"),
         )
 
         job = await extraction_client.extract_job(content)
@@ -790,8 +685,7 @@ def test_ollama_job_extraction_client() -> None:
     # JobMatch must use the trusted source URL, not the
     # URL returned by the model.
     assert job.application_url == (
-        "https://company.example.com/"
-        "careers/junior-data-engineer"
+        "https://company.example.com/careers/junior-data-engineer"
     )
 
     assert fake_client.received_model == "test-model"
@@ -838,8 +732,7 @@ def test_fetcher_repairs_double_encoded_utf8() -> None:
     )
 
     assert decoded == (
-        "\u2728 Ing\u00e9nieur avec l'exp\u00e9rience "
-        "d\u2019un d\u00e9veloppement."
+        "\u2728 Ing\u00e9nieur avec l'exp\u00e9rience d\u2019un d\u00e9veloppement."
     )
 
 
@@ -861,9 +754,7 @@ def test_job_schema_repairs_mojibake_in_model_output() -> None:
 
     assert job.title == "Ing\u00e9nieur IA"
     assert job.company == "Soci\u00e9t\u00e9 Exemple"
-    assert job.description == (
-        "\u2728 Une exp\u00e9rience d\u2019un mod\u00e8le IA."
-    )
+    assert job.description == ("\u2728 Une exp\u00e9rience d\u2019un mod\u00e8le IA.")
     assert job.requirements.required_skills == [
         "Ma\u00eetrise du d\u00e9veloppement",
     ]

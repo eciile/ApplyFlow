@@ -76,9 +76,7 @@ def test_extract_requirements_returns_validated_requirements() -> None:
     assert requirements.languages == ["English"]
     assert ollama_client.request is not None
     assert ollama_client.request["model"] == "test-model"
-    assert "Data Engineer" in (
-        ollama_client.request["messages"][1]["content"]
-    )
+    assert "Data Engineer" in (ollama_client.request["messages"][1]["content"])
     prompt = ollama_client.request["messages"][1]["content"]
     assert "Return every explicit candidate criterion" in prompt
     assert "MAIN CANDIDATE CRITERIA" in prompt
@@ -87,9 +85,7 @@ def test_extract_requirements_returns_validated_requirements() -> None:
     assert "named technical subject" in prompt
     assert "N+ years X experience" in prompt
     assert 'never the incomplete value "LLM"' in prompt
-    assert ollama_client.request["format"]["title"] == (
-        "CategorizedRequirements"
-    )
+    assert ollama_client.request["format"]["title"] == ("CategorizedRequirements")
     assert "items" in ollama_client.request["format"]["properties"]
 
 

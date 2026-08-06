@@ -1,29 +1,52 @@
+from datetime import UTC, datetime
+
 from fastapi import (
+    Depends,
     FastAPI,
     HTTPException,
-    status,
-    Depends,
-    Response,
     Request,
+    Response,
+    status,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import select  # type: ignore
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.database import get_session
+from app.models import (
+    ApplicationEvent,
+    CandidateProfile,
+    Job,
+    JobApplication,
 )
 from app.schemas import (
     ApplicationEventInput,
+    ApplicationEventResponse,
+    ApplicationEventType,
     ApplicationListItemResponse,
+    ApplicationStatus,
+    CandidateProfileInput,
+    CandidateProfileResponse,
+    JobApplicationInput,
+    JobApplicationResponse,
+    JobExtractionResponse,
+    JobImportResponse,
+    JobMatchResponse,
     JobPageFetchResponse,
     JobUrlRequest,
     JobUrlValidationResponse,
-    JobExtractionResponse,
-    JobImportResponse,
     StoredJobResponse,
-    CandidateProfileResponse,
-    CandidateProfileInput,
-    JobMatchResponse,
-    ApplicationEventResponse,
-    ApplicationEventType,
-    ApplicationStatus,
-    JobApplicationInput,
-    JobApplicationResponse,
 )
+from app.services.application_tracking import (
+    assess_possible_ghosting,
+)
+from app.services.generic_html_extractor import (
+    GenericContentExtractionError,
+    extract_generic_job_content,
+)
+from app.services.geocoding import geocode_location
+from app.services.job_matcher import calculate_job_match
 from app.services.job_page_fetcher import (
     FetchedJobPage,
     JobPageConnectionError,
@@ -35,43 +58,21 @@ from app.services.job_page_fetcher import (
     UnsupportedContentTypeError,
     fetch_job_page,
 )
-from app.services.jsonld_extractor import (
-    JobPostingNotFoundError,
-    extract_job_posting_jsonld,
-)
-from app.services.url_security import UnsafeUrlError
-from sqlalchemy import select # type: ignore
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
-from app.database import get_session
-from app.models import (
-    ApplicationEvent,
-    CandidateProfile,
-    Job,
-    JobApplication,
-)
 from app.services.job_sources import (
     JobExtractionResult,
     JobSourceError,
     JobSourceNotFoundError,
     extract_ats_job,
 )
-from app.services.generic_html_extractor import (
-    GenericContentExtractionError,
-    extract_generic_job_content,
+from app.services.jsonld_extractor import (
+    JobPostingNotFoundError,
+    extract_job_posting_jsonld,
 )
 from app.services.llm_job_extractor import (
     LlmJobExtractionError,
     get_llm_job_extraction_client,
 )
-from app.services.job_matcher import calculate_job_match
-from app.services.geocoding import geocode_location
-from app.services.application_tracking import (
-    assess_possible_ghosting,
-)
-from datetime import datetime, timezone
-from fastapi.middleware.cors import CORSMiddleware
+from app.services.url_security import UnsafeUrlError
 
 app = FastAPI(
     title="JobMatch API",
@@ -92,6 +93,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def add_utf8_charset_to_json(
     request: Request,
@@ -103,9 +105,7 @@ async def add_utf8_charset_to_json(
     content_type = response.headers.get("content-type", "")
 
     if content_type.casefold() == "application/json":
-        response.headers["content-type"] = (
-            "application/json; charset=utf-8"
-        )
+        response.headers["content-type"] = "application/json; charset=utf-8"
 
     return response
 
@@ -122,7 +122,6 @@ def health_check() -> dict[str, str]:
     status_code=status.HTTP_200_OK,
     tags=["Jobs"],
 )
-
 def validate_job_url(
     payload: JobUrlRequest,
 ) -> JobUrlValidationResponse:
@@ -131,9 +130,7 @@ def validate_job_url(
     host = payload.url.host
 
     if host is None:
-        raise ValueError(
-            "Validated URL unexpectedly has no hostname."
-        )
+        raise ValueError("Validated URL unexpectedly has no hostname.")
 
     return JobUrlValidationResponse(
         valid=True,
@@ -196,6 +193,7 @@ async def _retrieve_job_page(
             detail="The job page could not be retrieved.",
         ) from exc
 
+
 async def _extract_structured_job(
     url: str,
 ) -> JobExtractionResult:
@@ -233,9 +231,7 @@ async def _extract_structured_job(
         ) from exc
 
     return JobExtractionResult(
-        job=result.job.model_copy(
-            update={"requirements": enriched_requirements}
-        ),
+        job=result.job.model_copy(update={"requirements": enriched_requirements}),
         extraction_method=result.extraction_method,
         final_url=result.final_url,
         content_sha256=result.content_sha256,
@@ -298,9 +294,7 @@ async def _extract_basic_structured_job(
     llm_client = get_llm_job_extraction_client()
 
     try:
-        job = await llm_client.extract_job(
-            generic_content
-        )
+        job = await llm_client.extract_job(generic_content)
     except LlmJobExtractionError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -314,6 +308,7 @@ async def _extract_basic_structured_job(
         content_sha256=page.content_sha256,
     )
 
+
 @app.post(
     "/jobs/fetch",
     response_model=JobPageFetchResponse,
@@ -325,9 +320,7 @@ async def fetch_public_job_page(
 ) -> JobPageFetchResponse:
     """Safely retrieve a public HTML job page."""
 
-    page = await _retrieve_job_page(
-        str(payload.url)
-    )
+    page = await _retrieve_job_page(str(payload.url))
 
     return JobPageFetchResponse(
         fetched=True,
@@ -352,15 +345,14 @@ async def extract_job_from_url(
 ) -> JobExtractionResponse:
     """Extract a job through an ATS adapter or JSON-LD."""
 
-    result = await _extract_structured_job(
-        str(payload.url)
-    )
+    result = await _extract_structured_job(str(payload.url))
 
     return JobExtractionResponse(
         extracted=True,
         extraction_method=result.extraction_method,
         job=result.job,
     )
+
 
 @app.post(
     "/jobs/import",
@@ -382,20 +374,14 @@ async def import_job(
 
     source_url = str(payload.url)
 
-    existing_job = session.scalar(
-        select(Job).where(
-            Job.source_url == source_url
-        )
-    )
+    existing_job = session.scalar(select(Job).where(Job.source_url == source_url))
 
     if existing_job is not None:
         response.status_code = status.HTTP_200_OK
 
         return JobImportResponse(
             created=False,
-            job=StoredJobResponse.model_validate(
-                existing_job
-            ),
+            job=StoredJobResponse.model_validate(existing_job),
         )
 
     page = await _retrieve_job_page(source_url)
@@ -420,15 +406,9 @@ async def import_job(
         location=extracted_job.location,
         description=extracted_job.description,
         employment_types=extracted_job.employment_types,
-        required_skills=(
-            extracted_job.requirements.required_skills
-        ),
-        preferred_skills=(
-            extracted_job.requirements.preferred_skills
-        ),
-        qualifications=(
-            extracted_job.requirements.qualifications
-        ),
+        required_skills=(extracted_job.requirements.required_skills),
+        preferred_skills=(extracted_job.requirements.preferred_skills),
+        qualifications=(extracted_job.requirements.qualifications),
         soft_skills=extracted_job.requirements.soft_skills,
         languages=extracted_job.requirements.languages,
         date_posted=extracted_job.date_posted,
@@ -442,11 +422,7 @@ async def import_job(
     except IntegrityError:
         session.rollback()
 
-        existing_job = session.scalar(
-            select(Job).where(
-                Job.source_url == source_url
-            )
-        )
+        existing_job = session.scalar(select(Job).where(Job.source_url == source_url))
 
         if existing_job is None:
             raise
@@ -455,9 +431,7 @@ async def import_job(
 
         return JobImportResponse(
             created=False,
-            job=StoredJobResponse.model_validate(
-                existing_job
-            ),
+            job=StoredJobResponse.model_validate(existing_job),
         )
 
     session.refresh(job)
@@ -478,16 +452,10 @@ def list_jobs(
 ) -> list[StoredJobResponse]:
     """Return every imported job, newest first."""
 
-    jobs = session.scalars(
-        select(Job).order_by(
-            Job.created_at.desc()
-        )
-    ).all()
+    jobs = session.scalars(select(Job).order_by(Job.created_at.desc())).all()
 
-    return [
-        StoredJobResponse.model_validate(job)
-        for job in jobs
-    ]
+    return [StoredJobResponse.model_validate(job) for job in jobs]
+
 
 @app.get("/jobs/{job_id}", response_model=StoredJobResponse)
 def get_job(
@@ -504,6 +472,7 @@ def get_job(
 
     return job
 
+
 @app.get(
     "/profile",
     response_model=CandidateProfileResponse,
@@ -513,11 +482,7 @@ def get_candidate_profile(
 ) -> CandidateProfile:
     """Return the local candidate profile."""
 
-    profile = db.scalar(
-        select(CandidateProfile).order_by(
-            CandidateProfile.id.asc()
-        )
-    )
+    profile = db.scalar(select(CandidateProfile).order_by(CandidateProfile.id.asc()))
 
     if profile is None:
         raise HTTPException(
@@ -526,6 +491,7 @@ def get_candidate_profile(
         )
 
     return profile
+
 
 @app.put(
     "/profile",
@@ -537,19 +503,14 @@ def put_candidate_profile(
 ) -> CandidateProfile:
     """Create or replace the local candidate profile."""
 
-    profile = db.scalar(
-        select(CandidateProfile).order_by(
-            CandidateProfile.id.asc()
-        )
-    )
+    profile = db.scalar(select(CandidateProfile).order_by(CandidateProfile.id.asc()))
 
     profile_data = profile_input.model_dump()
 
     # Convert Pydantic language objects into JSON-compatible
     # dictionaries before storing them.
     profile_data["languages"] = [
-        language.model_dump()
-        for language in profile_input.languages
+        language.model_dump() for language in profile_input.languages
     ]
 
     if profile is None:
@@ -563,6 +524,7 @@ def put_candidate_profile(
     db.refresh(profile)
 
     return profile
+
 
 @app.post(
     "/jobs/{job_id}/match",
@@ -582,11 +544,7 @@ def match_job_to_candidate(
             detail="Job not found.",
         )
 
-    profile = db.scalar(
-        select(CandidateProfile).order_by(
-            CandidateProfile.id.asc()
-        )
-    )
+    profile = db.scalar(select(CandidateProfile).order_by(CandidateProfile.id.asc()))
 
     if profile is None:
         raise HTTPException(
@@ -596,25 +554,13 @@ def match_job_to_candidate(
 
     coordinates_updated = False
 
-    if (
-        profile.location
-        and (
-            profile.latitude is None
-            or profile.longitude is None
-        )
-    ):
+    if profile.location and (profile.latitude is None or profile.longitude is None):
         coordinates = geocode_location(profile.location)
         if coordinates is not None:
             profile.latitude, profile.longitude = coordinates
             coordinates_updated = True
 
-    if (
-        job.location
-        and (
-            job.latitude is None
-            or job.longitude is None
-        )
-    ):
+    if job.location and (job.latitude is None or job.longitude is None):
         coordinates = geocode_location(job.location)
         if coordinates is not None:
             job.latitude, job.longitude = coordinates
@@ -628,10 +574,7 @@ def match_job_to_candidate(
             profile.latitude,
             profile.longitude,
         )
-        if (
-            profile.latitude is not None
-            and profile.longitude is not None
-        )
+        if (profile.latitude is not None and profile.longitude is not None)
         else None
     )
 
@@ -640,10 +583,7 @@ def match_job_to_candidate(
             job.latitude,
             job.longitude,
         )
-        if (
-            job.latitude is not None
-            and job.longitude is not None
-        )
+        if (job.latitude is not None and job.longitude is not None)
         else None
     )
 
@@ -653,20 +593,12 @@ def match_job_to_candidate(
         preferred_skills=job.preferred_skills,
         profile_location=profile.location,
         profile_coordinates=profile_coordinates,
-        preferred_locations=(
-            profile.preferred_locations
-        ),
-        maximum_commute_distance_km=(
-            profile.max_commute_distance_km
-        ),
+        preferred_locations=(profile.preferred_locations),
+        maximum_commute_distance_km=(profile.max_commute_distance_km),
         job_location=job.location,
         job_coordinates=job_coordinates,
-        job_employment_types=(
-            job.employment_types
-        ),
-        preferred_employment_types=(
-            profile.preferred_employment_types
-        ),
+        job_employment_types=(job.employment_types),
+        preferred_employment_types=(profile.preferred_employment_types),
     )
 
     return JobMatchResponse(
@@ -674,31 +606,15 @@ def match_job_to_candidate(
         profile_id=profile.id,
         score=result.score,
         recommendation=result.recommendation,
-        matching_required_skills=(
-            result.matching_required_skills
-        ),
-        missing_required_skills=(
-            result.missing_required_skills
-        ),
-        matching_preferred_skills=(
-            result.matching_preferred_skills
-        ),
-        missing_preferred_skills=(
-            result.missing_preferred_skills
-        ),
+        matching_required_skills=(result.matching_required_skills),
+        missing_required_skills=(result.missing_required_skills),
+        matching_preferred_skills=(result.matching_preferred_skills),
+        missing_preferred_skills=(result.missing_preferred_skills),
         location_match=result.location_match,
-        location_distance_km=(
-            result.location_distance_km
-        ),
-        maximum_commute_distance_km=(
-            result.maximum_commute_distance_km
-        ),
-        location_match_method=(
-            result.location_match_method
-        ),
-        employment_type_match=(
-            result.employment_type_match
-        ),
+        location_distance_km=(result.location_distance_km),
+        maximum_commute_distance_km=(result.maximum_commute_distance_km),
+        location_match_method=(result.location_match_method),
+        employment_type_match=(result.employment_type_match),
         breakdown=result.breakdown,
     )
 
@@ -723,12 +639,10 @@ def put_job_application(
         )
 
     application = db.scalar(
-        select(JobApplication).where(
-            JobApplication.job_id == job_id
-        )
+        select(JobApplication).where(JobApplication.job_id == job_id)
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     new_status = application_input.status
 
     if application is None:
@@ -747,42 +661,27 @@ def put_job_application(
 
         event = ApplicationEvent(
             application_id=application.id,
-            event_type=_event_type_for_status(
-                new_status
-            ).value,
+            event_type=_event_type_for_status(new_status).value,
             occurred_at=now,
-            notes=(
-                f"Application tracking created with "
-                f"status '{new_status.value}'."
-            ),
+            notes=(f"Application tracking created with status '{new_status.value}'."),
         )
 
         db.add(event)
 
     else:
-        previous_status = ApplicationStatus(
-            application.status
-        )
+        previous_status = ApplicationStatus(application.status)
 
         application.status = new_status.value
-        application.applied_at = (
-            application_input.applied_at
-        )
-        application.follow_up_at = (
-            application_input.follow_up_at
-        )
-        application.next_action = (
-            application_input.next_action
-        )
+        application.applied_at = application_input.applied_at
+        application.follow_up_at = application_input.follow_up_at
+        application.next_action = application_input.next_action
         application.notes = application_input.notes
         application.last_activity_at = now
 
         if previous_status != new_status:
             event = ApplicationEvent(
                 application_id=application.id,
-                event_type=_event_type_for_status(
-                    new_status
-                ).value,
+                event_type=_event_type_for_status(new_status).value,
                 occurred_at=now,
                 notes=(
                     f"Status changed from "
@@ -796,9 +695,8 @@ def put_job_application(
     db.commit()
     db.refresh(application)
 
-    return _build_application_response(
-        application
-    )
+    return _build_application_response(application)
+
 
 def _event_type_for_status(
     status_value: ApplicationStatus,
@@ -806,18 +704,10 @@ def _event_type_for_status(
     """Choose the event type associated with a status."""
 
     event_types = {
-        ApplicationStatus.APPLIED: (
-            ApplicationEventType.APPLIED
-        ),
-        ApplicationStatus.INTERVIEW: (
-            ApplicationEventType.INTERVIEW
-        ),
-        ApplicationStatus.OFFER: (
-            ApplicationEventType.OFFER
-        ),
-        ApplicationStatus.REJECTED: (
-            ApplicationEventType.REJECTION
-        ),
+        ApplicationStatus.APPLIED: (ApplicationEventType.APPLIED),
+        ApplicationStatus.INTERVIEW: (ApplicationEventType.INTERVIEW),
+        ApplicationStatus.OFFER: (ApplicationEventType.OFFER),
+        ApplicationStatus.REJECTED: (ApplicationEventType.REJECTION),
     }
 
     return event_types.get(
@@ -843,14 +733,15 @@ def _last_event_time(
 
     def utc_comparison_time(value: datetime) -> datetime:
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=UTC)
 
-        return value.astimezone(timezone.utc)
+        return value.astimezone(UTC)
 
     return max(
         matching_times,
         key=utc_comparison_time,
     )
+
 
 def _build_application_response(
     application: JobApplication,
@@ -858,9 +749,7 @@ def _build_application_response(
     assessment = assess_possible_ghosting(
         status=application.status,
         applied_at=application.applied_at,
-        last_employer_response_at=(
-            application.last_employer_response_at
-        ),
+        last_employer_response_at=(application.last_employer_response_at),
     )
 
     return JobApplicationResponse(
@@ -874,29 +763,21 @@ def _build_application_response(
             ApplicationEventType.FOLLOW_UP_SENT,
         ),
         last_activity_at=application.last_activity_at,
-        last_employer_response_at=(
-            application.last_employer_response_at
-        ),
+        last_employer_response_at=(application.last_employer_response_at),
         next_action=application.next_action,
         notes=application.notes,
-        days_without_response=(
-            assessment.days_without_response
-        ),
-        possibly_ghosted=(
-            assessment.possibly_ghosted
-        ),
-        ghosting_threshold_days=(
-            assessment.ghosting_threshold_days
-        ),
+        days_without_response=(assessment.days_without_response),
+        possibly_ghosted=(assessment.possibly_ghosted),
+        ghosting_threshold_days=(assessment.ghosting_threshold_days),
         events=[
-            ApplicationEventResponse.model_validate(
-                event
-            )
+            ApplicationEventResponse.model_validate(event)
             for event in application.events
         ],
         created_at=application.created_at,
         updated_at=application.updated_at,
     )
+
+
 def _build_application_list_item(
     application: JobApplication,
     job: Job,
@@ -906,9 +787,7 @@ def _build_application_list_item(
     assessment = assess_possible_ghosting(
         status=application.status,
         applied_at=application.applied_at,
-        last_employer_response_at=(
-            application.last_employer_response_at
-        ),
+        last_employer_response_at=(application.last_employer_response_at),
     )
 
     return ApplicationListItemResponse(
@@ -924,20 +803,13 @@ def _build_application_list_item(
             ApplicationEventType.FOLLOW_UP_SENT,
         ),
         last_activity_at=application.last_activity_at,
-        last_employer_response_at=(
-            application.last_employer_response_at
-        ),
+        last_employer_response_at=(application.last_employer_response_at),
         next_action=application.next_action,
-        days_without_response=(
-            assessment.days_without_response
-        ),
-        possibly_ghosted=(
-            assessment.possibly_ghosted
-        ),
-        ghosting_threshold_days=(
-            assessment.ghosting_threshold_days
-        ),
+        days_without_response=(assessment.days_without_response),
+        possibly_ghosted=(assessment.possibly_ghosted),
+        ghosting_threshold_days=(assessment.ghosting_threshold_days),
     )
+
 
 @app.get(
     "/jobs/{job_id}/application",
@@ -958,9 +830,7 @@ def get_job_application(
         )
 
     application = db.scalar(
-        select(JobApplication).where(
-            JobApplication.job_id == job_id
-        )
+        select(JobApplication).where(JobApplication.job_id == job_id)
     )
 
     if application is None:
@@ -993,9 +863,7 @@ def add_application_event(
         )
 
     application = db.scalar(
-        select(JobApplication).where(
-            JobApplication.job_id == job_id
-        )
+        select(JobApplication).where(JobApplication.job_id == job_id)
     )
 
     if application is None:
@@ -1004,10 +872,7 @@ def add_application_event(
             detail="Job application not found.",
         )
 
-    occurred_at = (
-        event_input.occurred_at
-        or datetime.now(timezone.utc)
-    )
+    occurred_at = event_input.occurred_at or datetime.now(UTC)
 
     event = ApplicationEvent(
         application_id=application.id,
@@ -1020,18 +885,14 @@ def add_application_event(
 
     application.last_activity_at = occurred_at
 
-    if (
-        event_input.event_type
-        == ApplicationEventType.EMPLOYER_RESPONSE
-    ):
-        application.last_employer_response_at = (
-            occurred_at
-        )
+    if event_input.event_type == ApplicationEventType.EMPLOYER_RESPONSE:
+        application.last_employer_response_at = occurred_at
 
     db.commit()
     db.refresh(application)
 
     return _build_application_response(application)
+
 
 @app.get(
     "/applications",

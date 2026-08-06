@@ -1,8 +1,8 @@
 """Deterministic job-to-candidate matching utilities."""
 
 import re
-from collections.abc import Iterable
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from geopy.distance import geodesic
@@ -62,9 +62,7 @@ def match_skills(
     """
 
     normalized_candidate_skills = {
-        normalize_skill(skill)
-        for skill in candidate_skills
-        if skill.strip()
+        normalize_skill(skill) for skill in candidate_skills if skill.strip()
     }
 
     matching: list[str] = []
@@ -91,6 +89,7 @@ def match_skills(
             missing.append(job_skill)
 
     return matching, missing
+
 
 REQUIRED_SKILLS_WEIGHT = 60.0
 PREFERRED_SKILLS_WEIGHT = 20.0
@@ -151,6 +150,7 @@ class LocationMatchResult:
     distance_km: float | None
     method: str
 
+
 def normalize_text(value: str) -> str:
     """Normalize ordinary text for preference comparisons."""
 
@@ -160,9 +160,7 @@ def normalize_text(value: str) -> str:
     )
 
     without_accents = "".join(
-        character
-        for character in decomposed
-        if not unicodedata.combining(character)
+        character for character in decomposed if not unicodedata.combining(character)
     )
 
     normalized = re.sub(
@@ -179,11 +177,10 @@ def _location_text_variants(value: str) -> list[str]:
 
     variants = [normalize_text(value)]
     if "," in value:
-        variants.append(
-            normalize_text(value.split(",", 1)[0])
-        )
+        variants.append(normalize_text(value.split(",", 1)[0]))
 
     return list(dict.fromkeys(filter(None, variants)))
+
 
 def match_location(
     *,
@@ -206,35 +203,19 @@ def match_location(
     ]
 
     normalized_profile_location = (
-        normalize_text(profile_location)
-        if profile_location
-        else ""
+        normalize_text(profile_location) if profile_location else ""
     )
-    normalized_job_location = (
-        normalize_text(job_location)
-        if job_location
-        else ""
-    )
+    normalized_job_location = normalize_text(job_location) if job_location else ""
 
     candidate_accepts_remote = any(
-        preference in REMOTE_MARKERS
-        for preference in preferences
-    ) or any(
-        marker in normalized_profile_location
-        for marker in REMOTE_MARKERS
-    )
-    job_is_remote = any(
-        marker in normalized_job_location
-        for marker in REMOTE_MARKERS
-    )
+        preference in REMOTE_MARKERS for preference in preferences
+    ) or any(marker in normalized_profile_location for marker in REMOTE_MARKERS)
+    job_is_remote = any(marker in normalized_job_location for marker in REMOTE_MARKERS)
 
     if candidate_accepts_remote and job_is_remote:
         return LocationMatchResult(True, None, "remote")
 
-    if (
-        profile_coordinates is not None
-        and job_coordinates is not None
-    ):
+    if profile_coordinates is not None and job_coordinates is not None:
         try:
             distance_km = geodesic(
                 profile_coordinates,
@@ -250,48 +231,37 @@ def match_location(
             )
 
     physical_preferences = [
-        preference
-        for preference in preferences
-        if preference not in REMOTE_MARKERS
+        preference for preference in preferences if preference not in REMOTE_MARKERS
     ]
     if normalized_profile_location:
-        physical_preferences.extend(
-            _location_text_variants(profile_location or "")
-        )
+        physical_preferences.extend(_location_text_variants(profile_location or ""))
 
     if not normalized_job_location or not physical_preferences:
         return LocationMatchResult(None, None, "unavailable")
 
-    job_with_boundaries = (
-        f" {normalized_job_location} "
-    )
+    job_with_boundaries = f" {normalized_job_location} "
 
     for preference in physical_preferences:
         if not preference:
             continue
 
-        preference_with_boundaries = (
-            f" {preference} "
-        )
+        preference_with_boundaries = f" {preference} "
 
         if preference_with_boundaries in job_with_boundaries:
             return LocationMatchResult(True, None, "text")
 
-        if (
-            job_with_boundaries
-            in preference_with_boundaries
-        ):
+        if job_with_boundaries in preference_with_boundaries:
             return LocationMatchResult(True, None, "text")
 
     return LocationMatchResult(False, None, "text")
+
+
 def normalize_employment_type(
     employment_type: str,
 ) -> str:
     """Normalize employment-type labels."""
 
-    normalized = normalize_text(
-        employment_type
-    )
+    normalized = normalize_text(employment_type)
 
     return EMPLOYMENT_TYPE_ALIASES.get(
         normalized,
@@ -324,9 +294,8 @@ def match_employment_type(
     if not job_types or not preferred_types:
         return None
 
-    return bool(
-        job_types.intersection(preferred_types)
-    )
+    return bool(job_types.intersection(preferred_types))
+
 
 def calculate_job_match(
     *,
@@ -347,15 +316,9 @@ def calculate_job_match(
     candidate_skill_list = list(candidate_skills)
     required_skill_list = list(required_skills)
     preferred_skill_list = list(preferred_skills)
-    preferred_location_list = list(
-        preferred_locations
-    )
-    job_employment_type_list = list(
-        job_employment_types
-    )
-    preferred_employment_type_list = list(
-        preferred_employment_types
-    )
+    preferred_location_list = list(preferred_locations)
+    job_employment_type_list = list(job_employment_types)
+    preferred_employment_type_list = list(preferred_employment_types)
 
     (
         matching_required,
@@ -373,25 +336,13 @@ def calculate_job_match(
         preferred_skill_list,
     )
 
-    required_total = (
-        len(matching_required)
-        + len(missing_required)
-    )
-    preferred_total = (
-        len(matching_preferred)
-        + len(missing_preferred)
-    )
+    required_total = len(matching_required) + len(missing_required)
+    preferred_total = len(matching_preferred) + len(missing_preferred)
 
-    required_ratio = (
-        len(matching_required) / required_total
-        if required_total
-        else 0.0
-    )
+    required_ratio = len(matching_required) / required_total if required_total else 0.0
 
     preferred_ratio = (
-        len(matching_preferred) / preferred_total
-        if preferred_total
-        else 0.0
+        len(matching_preferred) / preferred_total if preferred_total else 0.0
     )
 
     location_result = match_location(
@@ -404,11 +355,9 @@ def calculate_job_match(
     )
     location_match = location_result.matches
 
-    employment_type_match = (
-        match_employment_type(
-            job_employment_type_list,
-            preferred_employment_type_list,
-        )
+    employment_type_match = match_employment_type(
+        job_employment_type_list,
+        preferred_employment_type_list,
     )
 
     category_data = {
@@ -424,23 +373,13 @@ def calculate_job_match(
         },
         "location": {
             "weight": LOCATION_WEIGHT,
-            "ratio": (
-                1.0
-                if location_match is True
-                else 0.0
-            ),
+            "ratio": (1.0 if location_match is True else 0.0),
             "available": location_match is not None,
         },
         "employment_type": {
             "weight": EMPLOYMENT_TYPE_WEIGHT,
-            "ratio": (
-                1.0
-                if employment_type_match is True
-                else 0.0
-            ),
-            "available": (
-                employment_type_match is not None
-            ),
+            "ratio": (1.0 if employment_type_match is True else 0.0),
+            "available": (employment_type_match is not None),
         },
     }
 
@@ -457,22 +396,13 @@ def calculate_job_match(
 
     total_score = 0.0
 
-    for category_name, category in (
-        category_data.items()
-    ):
+    for category_name, category in category_data.items():
         available = bool(category["available"])
 
         if available and available_weight:
-            adjusted_maximum = (
-                float(category["weight"])
-                / available_weight
-                * 100
-            )
+            adjusted_maximum = float(category["weight"]) / available_weight * 100
 
-            category_score = (
-                float(category["ratio"])
-                * adjusted_maximum
-            )
+            category_score = float(category["ratio"]) * adjusted_maximum
         else:
             adjusted_maximum = 0.0
             category_score = 0.0
@@ -490,44 +420,30 @@ def calculate_job_match(
 
     final_score = round(total_score)
 
-    recommendation = _recommendation_for_score(
-        final_score
-    )
+    recommendation = _recommendation_for_score(final_score)
 
     if (
         recommendation == "strong_match"
         and required_total > 0
-        and len(missing_required)
-        > required_total / 2
+        and len(missing_required) > required_total / 2
     ):
         recommendation = "good_match"
 
     return JobMatchResult(
         score=final_score,
         recommendation=recommendation,
-        matching_required_skills=(
-            matching_required
-        ),
-        missing_required_skills=(
-            missing_required
-        ),
-        matching_preferred_skills=(
-            matching_preferred
-        ),
-        missing_preferred_skills=(
-            missing_preferred
-        ),
+        matching_required_skills=(matching_required),
+        missing_required_skills=(missing_required),
+        matching_preferred_skills=(matching_preferred),
+        missing_preferred_skills=(missing_preferred),
         location_match=location_match,
         location_distance_km=location_result.distance_km,
-        maximum_commute_distance_km=(
-            maximum_commute_distance_km
-        ),
+        maximum_commute_distance_km=(maximum_commute_distance_km),
         location_match_method=location_result.method,
-        employment_type_match=(
-            employment_type_match
-        ),
+        employment_type_match=(employment_type_match),
         breakdown=breakdown,
     )
+
 
 def _recommendation_for_score(
     score: int,

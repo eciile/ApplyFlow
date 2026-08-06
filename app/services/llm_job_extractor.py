@@ -1,9 +1,13 @@
 from __future__ import annotations
+
 import json
+from functools import lru_cache
+from typing import Literal
+
 import httpx
 from ollama import AsyncClient, ResponseError
 from pydantic import BaseModel, Field, ValidationError
-from typing import Literal
+
 from app.config import Settings, get_settings
 from app.schemas import (
     ExtractedJobPosting,
@@ -11,7 +15,6 @@ from app.schemas import (
     JobRequirements,
 )
 from app.text_utils import repair_utf8_mojibake
-from functools import lru_cache
 
 MAX_INPUT_CHARACTERS = 4_000
 REQUIREMENTS_SECTION_START_MARKERS = (
@@ -144,18 +147,19 @@ class CategorizedRequirements(BaseModel):
 
     items: list[CategorizedRequirement]
 
+
 class OllamaJobExtractionClient:
     """extract structured job data using a local Ollama model"""
+
     def __init__(
-            self,
-            settings:Settings|None=None,
-            client:AsyncClient|None=None
+        self, settings: Settings | None = None, client: AsyncClient | None = None
     ) -> None:
         self.settings = settings or get_settings()
         self.client = client or AsyncClient(
             host=self.settings.ollama_host,
             timeout=self.settings.ollama_timeout_seconds,
         )
+
     async def extract_job(
         self,
         content: GenericJobContent,
@@ -218,23 +222,17 @@ class OllamaJobExtractionClient:
         raw_content = response.message.content
 
         if not raw_content or not raw_content.strip():
-            raise LlmJobExtractionError(
-                "Ollama returned an empty response."
-            )
+            raise LlmJobExtractionError("Ollama returned an empty response.")
 
         raw_content = repair_utf8_mojibake(raw_content)
 
         try:
             payload = json.loads(raw_content)
         except json.JSONDecodeError as exc:
-            raise LlmJobExtractionError(
-                "Ollama returned invalid JSON."
-            ) from exc
+            raise LlmJobExtractionError("Ollama returned invalid JSON.") from exc
 
         if not isinstance(payload, dict):
-            raise LlmJobExtractionError(
-                "Ollama returned an unexpected JSON structure."
-            )
+            raise LlmJobExtractionError("Ollama returned an unexpected JSON structure.")
 
         # The source URL is controlled by JobMatch. Do not trust the
         # model to generate or reproduce an application URL.
@@ -259,21 +257,12 @@ class OllamaJobExtractionClient:
 
         normalized_title = job.title.casefold()
 
-        if any(
-            marker in normalized_title
-            for marker in generic_title_markers
-        ):
-            raise LlmJobExtractionError(
-                "Ollama did not extract a specific job title."
-            )
+        if any(marker in normalized_title for marker in generic_title_markers):
+            raise LlmJobExtractionError("Ollama did not extract a specific job title.")
 
         if not job.description:
             job = job.model_copy(
-                update={
-                    "description": _build_description_fallback(
-                        content.text
-                    )
-                }
+                update={"description": _build_description_fallback(content.text)}
             )
         return job
 
@@ -286,9 +275,7 @@ class OllamaJobExtractionClient:
         """Extract atomic requirements from an existing job."""
 
         requirements_text = _select_requirements_text(description)
-        requirements_text = _label_requirement_priority(
-            requirements_text
-        )
+        requirements_text = _label_requirement_priority(requirements_text)
 
         prompt = f"""
         Return every explicit candidate criterion as an atomic categorized
@@ -380,8 +367,7 @@ class OllamaJobExtractionClient:
             ) from exc
         except httpx.TimeoutException as exc:
             raise LlmJobExtractionError(
-                "Ollama did not finish requirements extraction "
-                "before the timeout."
+                "Ollama did not finish requirements extraction before the timeout."
             ) from exc
         except httpx.ConnectError as exc:
             raise LlmJobExtractionError(
@@ -399,9 +385,7 @@ class OllamaJobExtractionClient:
         raw_content = response.message.content
 
         if not raw_content or not raw_content.strip():
-            raise LlmJobExtractionError(
-                "Ollama returned empty job requirements."
-            )
+            raise LlmJobExtractionError("Ollama returned empty job requirements.")
 
         raw_content = repair_utf8_mojibake(raw_content)
 
@@ -472,9 +456,7 @@ def _label_requirement_priority(text: str) -> str:
 
     position, marker = min(optional_positions)
     main_requirements = text[:position].strip()
-    optional_requirements = text[
-        position + len(marker):
-    ].strip(" :.-")
+    optional_requirements = text[position + len(marker) :].strip(" :.-")
 
     return (
         "MAIN CANDIDATE CRITERIA:\n"
@@ -483,16 +465,14 @@ def _label_requirement_priority(text: str) -> str:
         f"{optional_requirements}"
     )
 
+
 def _build_prompt(
     content: GenericJobContent,
 ) -> str:
     page_text = content.text[:MAX_INPUT_CHARACTERS]
     page_title = content.page_title or "Unavailable"
 
-    metadata_lines = [
-        f"- {key}: {value}"
-        for key, value in content.metadata.items()
-    ]
+    metadata_lines = [f"- {key}: {value}" for key, value in content.metadata.items()]
 
     metadata_text = (
         "\n".join(metadata_lines)
@@ -526,6 +506,7 @@ def _build_prompt(
     - Map alternance to APPRENTICESHIP.
     """.strip()
 
+
 def _build_description_fallback(
     text: str,
     max_characters: int = 1_500,
@@ -551,6 +532,7 @@ def _build_description_fallback(
         return shortened[: last_period + 1]
 
     return shortened.rstrip() + "..."
+
 
 @lru_cache
 def get_llm_job_extraction_client() -> OllamaJobExtractionClient:
