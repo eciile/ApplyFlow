@@ -209,3 +209,46 @@ export async function saveProfile(
 
   return response.json() as Promise<CandidateProfile>;
 }
+
+export type ApplicationStatus =
+  | "saved"
+  | "preparing"
+  | "applied"
+  | "interview"
+  | "offer"
+  | "rejected"
+  | "withdrawn";
+
+export type ApplicationListItem = {
+  application_id: number;
+  job_id: number;
+  job_title: string | null;
+  company: string | null;
+  status: ApplicationStatus;
+  applied_at: string | null;
+  follow_up_at: string | null;
+  last_follow_up_sent_at: string | null;
+  last_activity_at: string;
+  last_employer_response_at: string | null;
+  next_action: string | null;
+  days_without_response: number | null;
+  possibly_ghosted: boolean;
+  ghosting_threshold_days: number;
+};
+
+export async function getApplications(
+  signal?: AbortSignal,
+): Promise<ApplicationListItem[]> {
+  const response = await fetch(`${API_BASE_URL}/applications`, {
+    headers: {
+      Accept: "application/json",
+    },
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<ApplicationListItem[]>;
+}
