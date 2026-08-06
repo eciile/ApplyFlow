@@ -71,6 +71,7 @@ from app.services.application_tracking import (
     assess_possible_ghosting,
 )
 from datetime import datetime, timezone
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="JobMatch API",
@@ -80,7 +81,16 @@ app = FastAPI(
     ),
     version="0.2.0",
 )
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.middleware("http")
 async def add_utf8_charset_to_json(
@@ -478,6 +488,21 @@ def list_jobs(
         StoredJobResponse.model_validate(job)
         for job in jobs
     ]
+
+@app.get("/jobs/{job_id}", response_model=StoredJobResponse)
+def get_job(
+    job_id: int,
+    db: Session = Depends(get_session),
+) -> Job:
+    job = db.get(Job, job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found.",
+        )
+
+    return job
 
 @app.get(
     "/profile",
