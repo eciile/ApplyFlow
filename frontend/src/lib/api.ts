@@ -108,3 +108,44 @@ export async function importJob(url: string): Promise<JobImportResponse> {
 
   return response.json() as Promise<JobImportResponse>;
 }
+
+export type JobMatchResult = {
+  job_id: number;
+  profile_id: number;
+  score: number;
+  recommendation: string;
+
+  matching_required_skills: string[];
+  missing_required_skills: string[];
+  matching_preferred_skills: string[];
+  missing_preferred_skills: string[];
+
+  location_match: boolean | null;
+  location_distance_km: number | null;
+  maximum_commute_distance_km: number | null;
+  location_match_method: string;
+
+  employment_type_match: boolean | null;
+
+  required_skills_score?: number | null;
+  preferred_skills_score?: number | null;
+  location_score?: number | null;
+  employment_type_score?: number | null;
+};
+
+export async function calculateJobMatch(
+  jobId: number,
+): Promise<JobMatchResult> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}/match`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(await getErrorMessage(response));
+  }
+
+  return response.json() as Promise<JobMatchResult>;
+}
